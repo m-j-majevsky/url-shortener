@@ -55,8 +55,8 @@ func handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	io.WriteString(w, string(longURL))
+	w.Header().Set("Location", string(longURL))
+	w.WriteHeader(http.StatusTemporaryRedirect)
 }
 
 func isValidGetRequest(r *http.Request) (bool, string) {
@@ -89,7 +89,7 @@ func handlePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	shortURL := fmt.Sprintf("http://%s/%s", r.Host, token)
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusCreated)
 	io.WriteString(w, shortURL)
 }
 
