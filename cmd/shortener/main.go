@@ -1,17 +1,19 @@
 package main
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/m-j-majevsky/url-shortener/internal/handler"
+	"github.com/m-j-majevsky/url-shortener/internal/repository"
 )
 
 func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
+	log.Fatal(run())
 }
 
 func run() error {
-	return http.ListenAndServe(`:8080`, http.HandlerFunc(handler.Webhook))
+	storage := repository.ProvideURLStorage()
+	webhook := http.HandlerFunc(handler.CreateWebhook(storage))
+	return http.ListenAndServe(`:8080`, webhook)
 }
