@@ -14,41 +14,43 @@ import (
 
 var storage model.URLStorage
 
-func init() {
-	storage = service.ProvideURLStorage()
+func CreateWebhook(s model.URLStorage) func(http.ResponseWriter, *http.Request) {
+	storage = s
+	return webhook
 }
 
 // функция-обработчик HTTP-запроса
-func Webhook(w http.ResponseWriter, r *http.Request) {
+func webhook(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 
-	if ok, err := validateRequest(r); !ok {
-		http.Error(w, err, http.StatusBadRequest)
-		return
-	}
+	switch url := r.URL.String(); r.Method {
 
-	switch r.Method {
 	case http.MethodPost:
-		handlePost(w, r)
-	case http.MethodGet:
-		handleGet(w, r)
-	}
-}
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "ошибка чтения тела запроса", http.StatusBadRequest)
+			return
+		}
+		if ok, err := isValidPostRequest(url, bodyBytes); !ok {
+			http.Error(w, err, http.StatusBadRequest)
+		}
+		handlePost(w, r.Host, bodyBytes)
 
-func validateRequest(r *http.Request) (bool, string) {
-	switch r.Method {
-	case http.MethodPost:
-		return isValidPostRequest(r)
 	case http.MethodGet:
-		return isValidGetRequest(r)
+		if ok, err := isValidGetRequest(url); !ok {
+			http.Error(w, err, http.StatusBadRequest)
+			return
+		}
+		handleGet(w, url)
+
 	default:
-		return false, "Method not allowed"
+		http.Error(w, "недопустимый метод", http.StatusBadRequest)
+
 	}
 }
 
-func handleGet(w http.ResponseWriter, r *http.Request) {
-	url := r.URL.String()[1:]
-	longURL, err := storage.Get(model.ShortURL(url))
+func handleGet(w http.ResponseWriter, url string) {
+	longURL, err := service.ResolveShortURL(storage, model.ShortURL(url[1:]))
 
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -59,9 +61,7 @@ func handleGet(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusTemporaryRedirect)
 }
 
-func isValidGetRequest(r *http.Request) (bool, string) {
-	url := r.URL.String()
-
+func isValidGetRequest(url string) (bool, string) {
 	segments := strings.Split(path.Clean(url), "/")
 
 	if len(segments) != 2 || len(segments[0]) != 0 || len(segments[1]) != 8 {
@@ -75,30 +75,26 @@ func isValidGetRequest(r *http.Request) (bool, string) {
 	return true, ""
 }
 
-func handlePost(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	token, shortenerErr := storage.Add(model.LongURL(body))
+func handlePost(w http.ResponseWriter, host string, body []byte) {
+	token, shortenerErr := service.ShortenURL(storage, model.LongURL(body))
 	if shortenerErr != nil {
 		http.Error(w, shortenerErr.Error(), http.StatusBadRequest)
 		return
 	}
 
-	shortURL := fmt.Sprintf("http://%s/%s", r.Host, token)
+	shortURL := fmt.Sprintf("http://%s/%s", host, token)
 	w.WriteHeader(http.StatusCreated)
 	io.WriteString(w, shortURL)
 }
 
-func isValidPostRequest(r *http.Request) (ok bool, err string) {
-	ok = (r.URL.String() == "/")
-
-	if !ok {
-		err = "неверный формат URL: ожидается /"
+func isValidPostRequest(url string, body []byte) (bool, string) {
+	if url != "/" {
+		return false, `неверный формат URL: ожидается "/"`
 	}
 
-	return
+	if len(body) == 0 {
+		return false, "тело запроса не может быть пустым"
+	}
+
+	return true, ""
 }

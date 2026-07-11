@@ -1,8 +1,12 @@
 package model
 
 type LongURL string
-
 type ShortURL string
+
+const (
+	EmptyShortURL = ShortURL("")
+	EmptyLongURL  = LongURL("")
+)
 
 type URLStorageError struct {
 	Message string
@@ -13,7 +17,8 @@ func (e *URLStorageError) Error() string {
 }
 
 type URLStorage interface {
-	Add(lu LongURL) (ShortURL, *URLStorageError)
-	Get(su ShortURL) (LongURL, *URLStorageError)
-	Remove(su ShortURL)
+	Add(key ShortURL, value LongURL) *URLStorageError
+	Get(key ShortURL) (LongURL, *URLStorageError)
+	Find(value LongURL) (ShortURL, bool)
+	Remove(key ShortURL)
 }
