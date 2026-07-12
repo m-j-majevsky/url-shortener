@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	tokenLength = 8
+	TokenLength = 8
 )
 
 var (
@@ -34,7 +34,7 @@ func ShortenURL(s model.URLStorage, longURL model.LongURL) (model.ShortURL, *mod
 	attempts := 0
 	maxAttempts := 1000 // защита от бесконечного цикла при почти заполненной БД
 	for {
-		token = base62.GenerateToken(tokenLength)
+		token = base62.GenerateToken(TokenLength)
 		if _, err := s.Get(model.ShortURL(token)); err != nil {
 			// такого токена в базе нет, всё в порядке
 			break

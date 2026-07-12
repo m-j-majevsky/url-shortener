@@ -13,7 +13,7 @@ func TestValidateBase62(t *testing.T) {
 		want *base62.Base62Error
 	}{
 		{
-			name: "Проверка на успешной валидации base62-строки",
+			name: "Проверка на успешность валидации base62-строки",
 			s:    "AsD0h8Ds",
 			want: nil,
 		},
@@ -27,7 +27,7 @@ func TestValidateBase62(t *testing.T) {
 			},
 		},
 		{
-			name: "Проверка на недопустимость на base62-символов ASCII",
+			name: "Проверка на недопустимость не base62-символов ASCII",
 			s:    "a_String",
 			want: &base62.Base62Error{
 				Input:   "a_String",
@@ -36,7 +36,7 @@ func TestValidateBase62(t *testing.T) {
 			},
 		},
 		{
-			name: "Проверка на недопустимость на base62-символов не из ASCII",
+			name: "Проверка на недопустимость не base62-символов не из ASCII",
 			s:    "aΩString",
 			want: &base62.Base62Error{
 				Input:   "aΩString",

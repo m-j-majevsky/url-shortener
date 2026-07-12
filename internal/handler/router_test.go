@@ -29,8 +29,6 @@ func TestRouterTestSuite(t *testing.T) {
 const (
 	yandexShortURL = "ZcVp01GT"
 	yandexLongURL  = "https://yandex.ru"
-
-	// expectedShortURLLength = 8
 )
 
 func (suite *RouterTestSuite) SetupSuite() {
@@ -61,7 +59,7 @@ func (suite *RouterTestSuite) SetupSuite() {
 func (suite *RouterTestSuite) TestWebhook() {
 	webhook := handler.CreateWebhook(suite.storage)
 	localhost := "localhost:8080"
-	// описываем набор данных: метод запроса, ожидаемый код ответа, ожидаемое тело
+
 	testCases := []struct {
 		name                string
 		method              string

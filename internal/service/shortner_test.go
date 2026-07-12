@@ -19,8 +19,6 @@ const (
 	goLongURL   = model.LongURL("https://go.dev")
 
 	aShortURL = model.ShortURL("1Z2Z3Z5Z")
-
-	expectedShortURLLength = 8
 )
 
 type ShortenerTestSuite struct {
@@ -69,7 +67,7 @@ func (suite *ShortenerTestSuite) TestShortenURLWithNoErrorForValidInput() {
 func (suite *ShortenerTestSuite) TestShortenURLResultTokenValidity() {
 	shortURL, err := service.ShortenURL(suite.storage, goLongURL)
 	suite.Require().Nil(err)
-	suite.Require().Equal(expectedShortURLLength, len(shortURL))
+	suite.Require().Equal(service.TokenLength, len(shortURL))
 	suite.Nil(base62.ValidateBase62(string(shortURL)))
 }
 
