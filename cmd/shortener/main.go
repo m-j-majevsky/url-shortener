@@ -14,6 +14,6 @@ func main() {
 
 func run() error {
 	storage := repository.ProvideURLStorage()
-	webhook := http.HandlerFunc(handler.CreateWebhook(storage))
-	return http.ListenAndServe(`:8080`, webhook)
+	router := handler.CreateRouter(storage)
+	return http.ListenAndServe(`:8080`, router)
 }
