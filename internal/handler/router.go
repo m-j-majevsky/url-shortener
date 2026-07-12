@@ -12,10 +12,14 @@ import (
 	"github.com/m-j-majevsky/url-shortener/internal/service"
 )
 
-var storage model.URLStorage
+var (
+	storage model.URLStorage
+	baseURL string
+)
 
-func CreateRouter(s model.URLStorage) http.Handler {
+func CreateRouter(s model.URLStorage, targetURLBase string) http.Handler {
 	storage = s
+	baseURL = targetURLBase
 
 	r := chi.NewRouter()
 
@@ -88,7 +92,7 @@ func handlePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortURL := fmt.Sprintf("http://%s/%s", r.Host, token)
+	shortURL := fmt.Sprintf("%s/%s", baseURL, token)
 
 	w.WriteHeader(http.StatusCreated)
 	io.WriteString(w, shortURL)
