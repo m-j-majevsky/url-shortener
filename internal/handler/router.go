@@ -12,19 +12,23 @@ import (
 	"github.com/m-j-majevsky/url-shortener/internal/service"
 )
 
-var storage model.URLStorage
+var (
+	storage model.URLStorage
+	baseURL string
+)
 
-func CreateRouter(s model.URLStorage) http.Handler {
+func CreateRouter(s model.URLStorage, targetURLBase string) http.Handler {
 	storage = s
+	baseURL = targetURLBase
 
 	r := chi.NewRouter()
 
 	r.Group(func(r chi.Router) {
 		r.Use(contentTypeMiddleware)
-		r.Post("/", handlePost)
+		r.Post("/", shortenLongURL)
 	})
 
-	r.Get("/{token}", handleGet)
+	r.Get("/{token}", resolveShortURL)
 
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "недопустимый путь в URL", http.StatusBadRequest)
@@ -44,15 +48,14 @@ func contentTypeMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func handleGet(w http.ResponseWriter, r *http.Request) {
+func resolveShortURL(w http.ResponseWriter, r *http.Request) {
 	token := chi.URLParam(r, "token")
-	if ok, err := isValidGetRequest(token); !ok {
-		http.Error(w, err, http.StatusBadRequest)
+	if err := base62.ValidateBase62(token); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	longURL, err := service.ResolveShortURL(storage, model.ShortURL(token))
-
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -61,15 +64,7 @@ func handleGet(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, string(longURL), http.StatusTemporaryRedirect)
 }
 
-func isValidGetRequest(token string) (bool, string) {
-	if base62err := base62.ValidateBase62(token); base62err != nil {
-		return false, fmt.Sprintf("недопустимый токен: %s", base62err)
-	}
-
-	return true, ""
-}
-
-func handlePost(w http.ResponseWriter, r *http.Request) {
+func shortenLongURL(w http.ResponseWriter, r *http.Request) {
 	bodyBytes, err := io.ReadAll(r.Body)
 
 	if err != nil {
@@ -77,26 +72,19 @@ func handlePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, err := isValidPostRequest(bodyBytes); !ok {
-		http.Error(w, err, http.StatusBadRequest)
-	}
-
-	token, shortenerErr := service.ShortenURL(storage, model.LongURL(bodyBytes))
-
-	if shortenerErr != nil {
-		http.Error(w, shortenerErr.Error(), http.StatusBadRequest)
+	if len(bodyBytes) == 0 {
+		http.Error(w, "тело запроса не может быть пустым", http.StatusBadRequest)
 		return
 	}
 
-	shortURL := fmt.Sprintf("http://%s/%s", r.Host, token)
+	token, shortenerErr := service.ShortenURL(storage, model.LongURL(bodyBytes))
+	if shortenerErr != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	shortURL := fmt.Sprintf("%s/%s", baseURL, token)
 
 	w.WriteHeader(http.StatusCreated)
 	io.WriteString(w, shortURL)
-}
-
-func isValidPostRequest(body []byte) (bool, string) {
-	if len(body) == 0 {
-		return false, "тело запроса не может быть пустым"
-	}
-	return true, ""
 }
