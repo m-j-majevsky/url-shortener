@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path"
-	"strings"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/m-j-majevsky/url-shortener/internal/base62"
 	"github.com/m-j-majevsky/url-shortener/internal/model"
@@ -14,87 +14,89 @@ import (
 
 var storage model.URLStorage
 
-func CreateWebhook(s model.URLStorage) func(http.ResponseWriter, *http.Request) {
+func CreateRouter(s model.URLStorage) http.Handler {
 	storage = s
-	return webhook
-}
 
-// функция-обработчик HTTP-запроса
-func webhook(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain")
+	r := chi.NewRouter()
 
-	switch url := r.URL.String(); r.Method {
+	r.Group(func(r chi.Router) {
+		r.Use(contentTypeMiddleware)
+		r.Post("/", handlePost)
+	})
 
-	case http.MethodPost:
-		bodyBytes, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, "ошибка чтения тела запроса", http.StatusBadRequest)
-			return
-		}
-		if ok, err := isValidPostRequest(url, bodyBytes); !ok {
-			http.Error(w, err, http.StatusBadRequest)
-		}
-		handlePost(w, r.Host, bodyBytes)
+	r.Get("/{token}", handleGet)
 
-	case http.MethodGet:
-		if ok, err := isValidGetRequest(url); !ok {
-			http.Error(w, err, http.StatusBadRequest)
-			return
-		}
-		handleGet(w, url)
+	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "недопустимый путь в URL", http.StatusBadRequest)
+	})
 
-	default:
+	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "недопустимый метод", http.StatusBadRequest)
+	})
 
-	}
+	return r
 }
 
-func handleGet(w http.ResponseWriter, url string) {
-	longURL, err := service.ResolveShortURL(storage, model.ShortURL(url[1:]))
+func contentTypeMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func handleGet(w http.ResponseWriter, r *http.Request) {
+	token := chi.URLParam(r, "token")
+	if ok, err := isValidGetRequest(token); !ok {
+		http.Error(w, err, http.StatusBadRequest)
+		return
+	}
+
+	longURL, err := service.ResolveShortURL(storage, model.ShortURL(token))
 
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	w.Header().Set("Location", string(longURL))
-	w.WriteHeader(http.StatusTemporaryRedirect)
+	http.Redirect(w, r, string(longURL), http.StatusTemporaryRedirect)
 }
 
-func isValidGetRequest(url string) (bool, string) {
-	segments := strings.Split(path.Clean(url), "/")
-
-	if len(segments) != 2 || len(segments[0]) != 0 || len(segments[1]) != 8 {
-		return false, "неверный формат URL: ожидается /<токен-из-восьми-base62-символов>"
-	}
-
-	if base62err := base62.ValidateBase62(segments[1]); base62err != nil {
+func isValidGetRequest(token string) (bool, string) {
+	if base62err := base62.ValidateBase62(token); base62err != nil {
 		return false, fmt.Sprintf("недопустимый токен: %s", base62err)
 	}
 
 	return true, ""
 }
 
-func handlePost(w http.ResponseWriter, host string, body []byte) {
-	token, shortenerErr := service.ShortenURL(storage, model.LongURL(body))
+func handlePost(w http.ResponseWriter, r *http.Request) {
+	bodyBytes, err := io.ReadAll(r.Body)
+
+	if err != nil {
+		http.Error(w, "ошибка чтения тела запроса", http.StatusBadRequest)
+		return
+	}
+
+	if ok, err := isValidPostRequest(bodyBytes); !ok {
+		http.Error(w, err, http.StatusBadRequest)
+	}
+
+	token, shortenerErr := service.ShortenURL(storage, model.LongURL(bodyBytes))
+
 	if shortenerErr != nil {
 		http.Error(w, shortenerErr.Error(), http.StatusBadRequest)
 		return
 	}
 
-	shortURL := fmt.Sprintf("http://%s/%s", host, token)
+	shortURL := fmt.Sprintf("http://%s/%s", r.Host, token)
+
 	w.WriteHeader(http.StatusCreated)
 	io.WriteString(w, shortURL)
 }
 
-func isValidPostRequest(url string, body []byte) (bool, string) {
-	if url != "/" {
-		return false, `неверный формат URL: ожидается "/"`
-	}
-
+func isValidPostRequest(body []byte) (bool, string) {
 	if len(body) == 0 {
 		return false, "тело запроса не может быть пустым"
 	}
-
 	return true, ""
 }

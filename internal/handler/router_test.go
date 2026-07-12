@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-resty/resty/v2"
+
 	"github.com/m-j-majevsky/url-shortener/internal/handler"
 	"github.com/m-j-majevsky/url-shortener/internal/model"
 	"github.com/m-j-majevsky/url-shortener/internal/repository"
@@ -57,8 +59,9 @@ func (suite *RouterTestSuite) SetupSuite() {
 }
 
 func (suite *RouterTestSuite) TestWebhook() {
-	webhook := handler.CreateWebhook(suite.storage)
-	localhost := "localhost:8080"
+	router := handler.CreateRouter(suite.storage)
+	ts := httptest.NewServer(router)
+	defer ts.Close()
 
 	testCases := []struct {
 		name                string
@@ -90,6 +93,12 @@ func (suite *RouterTestSuite) TestWebhook() {
 			expectedCode: http.StatusBadRequest,
 		},
 		{
+			name:         "невалидный путь в URL",
+			method:       http.MethodGet,
+			requestURL:   "/token/WasD01_3",
+			expectedCode: http.StatusBadRequest,
+		},
+		{
 			name:         "валидный URL, но данные не найдены",
 			method:       http.MethodGet,
 			requestURL:   "/WasD0123",
@@ -118,40 +127,63 @@ func (suite *RouterTestSuite) TestWebhook() {
 			expectedCode: http.StatusBadRequest,
 		},
 		{
-			name:         "валидные данные",
-			method:       http.MethodPost,
-			requestURL:   "/",
-			requestBody:  yandexLongURL,
-			expectedBody: fmt.Sprintf("http://%s/%s", localhost, yandexShortURL),
-			expectedCode: http.StatusCreated,
+			name:                "валидные данные",
+			method:              http.MethodPost,
+			requestURL:          "/",
+			requestBody:         yandexLongURL,
+			expectedBody:        ts.URL + "/" + yandexShortURL,
+			expectedHeader:      "Content-Type",
+			expectedHeaderValue: "text/plain",
+			expectedCode:        http.StatusCreated,
+		},
+		// DELETE
+		{
+			name:         "невалидный метод",
+			method:       http.MethodDelete,
+			requestURL:   "/WasD0123",
+			expectedCode: http.StatusBadRequest,
 		},
 	}
 
 	for _, tc := range testCases {
 		suite.T().Run(fmt.Sprintf("%q: %s", tc.method, tc.name), func(t *testing.T) {
-			b := strings.NewReader(tc.requestBody)
-			r := httptest.NewRequest(tc.method, tc.requestURL, io.NopCloser(b))
-			r.Host = localhost
-			w := httptest.NewRecorder()
-			webhook(w, r)
+			// Учитывая формат ответа на запрос GET и особенности resty,
+			// отключаем автоматическое следование за редиректами
+			cli := resty.New().SetRedirectPolicy(resty.NoRedirectPolicy())
 
-			result := w.Result()
+			// Настройка тестового запроса
+			req := cli.R()
+			req.Method = tc.method
+			req.URL = ts.URL + tc.requestURL
+			req.Body = io.NopCloser(strings.NewReader(tc.requestBody))
 
-			assert.Equal(t, tc.expectedCode, result.StatusCode, "Код ответа не совпадает с ожидаемым")
+			resp, err := req.Send()
+
+			// Проверяем возможные виды ошибок
+
+			require.Conditionf(t,
+				func() bool { return err == nil || isErrAutoRedirectDisabled(err) },
+				"ошибка при создании HTTP-запроса к серверу: %s", err,
+			)
+
+			assert.Equal(t, tc.expectedCode, resp.StatusCode(), "Код ответа не совпадает с ожидаемым")
 
 			if h := tc.expectedHeader; h != "" {
 				ehv := tc.expectedHeaderValue
-				if ahv := result.Header.Get(h); ehv != ahv {
+				if ahv := resp.Header().Get(h); ehv != ahv {
 					t.Errorf("Заголовок %s: ожидаемое значение %q, фактическое значение %q", h, ehv, ahv)
 				}
 			}
 
 			if tc.expectedBody != "" {
-				defer result.Body.Close()
-				resultBody, err := io.ReadAll(result.Body)
-				require.NoError(t, err)
-				assert.Equal(t, tc.expectedBody, string(resultBody), "Тело ответа не совпадает с ожидаемым")
+				getBody := resp.Body
+				require.NotNil(t, getBody)
+				assert.Equal(t, tc.expectedBody, string(getBody()), "Тело ответа не совпадает с ожидаемым")
 			}
 		})
 	}
+}
+
+func isErrAutoRedirectDisabled(err error) bool {
+	return strings.HasSuffix(err.Error(), resty.ErrAutoRedirectDisabled.Error())
 }
