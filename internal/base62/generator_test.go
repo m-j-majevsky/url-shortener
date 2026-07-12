@@ -31,7 +31,6 @@ func TestGenerateToken(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := base62.GenerateToken(tt.tokenLength)
-			// TODO: update the condition below to compare got with tt.want.
 			if tt.tokenLength != len(got) ||
 				tt.tokenLength > 0 && base62.ValidateBase62(got) != nil {
 				t.Errorf("GenerateToken() = %v, want %v", got, tt.want)
