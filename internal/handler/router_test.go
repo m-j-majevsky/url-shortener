@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/m-j-majevsky/url-shortener/internal/config"
 	"github.com/m-j-majevsky/url-shortener/internal/handler"
 	"github.com/m-j-majevsky/url-shortener/internal/model"
 	"github.com/m-j-majevsky/url-shortener/internal/repository"
@@ -58,8 +59,16 @@ func (suite *RouterTestSuite) SetupSuite() {
 	}
 }
 
+func configureTestApplication(s *RouterTestSuite) config.ApplicationConfig {
+	return config.ApplicationConfig{
+		TargetURLBase: "http://localhost:8111/url",
+		Storage:       s.storage,
+	}
+}
+
 func (suite *RouterTestSuite) TestWebhook() {
-	router := handler.CreateRouter(suite.storage)
+	testCfg := configureTestApplication(suite)
+	router := handler.CreateRouter(testCfg.Storage, testCfg.TargetURLBase)
 	ts := httptest.NewServer(router)
 	defer ts.Close()
 
@@ -131,7 +140,7 @@ func (suite *RouterTestSuite) TestWebhook() {
 			method:              http.MethodPost,
 			requestURL:          "/",
 			requestBody:         yandexLongURL,
-			expectedBody:        ts.URL + "/" + yandexShortURL,
+			expectedBody:        testCfg.TargetURLBase + "/" + yandexShortURL,
 			expectedHeader:      "Content-Type",
 			expectedHeaderValue: "text/plain",
 			expectedCode:        http.StatusCreated,
