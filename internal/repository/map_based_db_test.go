@@ -1,70 +1,72 @@
-package repository_test
+package repository
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/m-j-majevsky/url-shortener/internal/base62"
 	"github.com/m-j-majevsky/url-shortener/internal/model"
-	"github.com/m-j-majevsky/url-shortener/internal/repository"
 )
 
 type MapBasedDBTestSuite struct {
 	suite.Suite
-	storage model.URLStorage
+	storage URLStorage
 }
 
-const (
-	yandexShortURL = model.ShortURL("ZcVp01GT")
-	yandexLongURL  = model.LongURL("https://yandex.ru")
+var (
+	yandexShortURL model.ShortURL
+	yandexLongURL  = model.NewLongURL("https://yandex.ru")
 
-	mailShortURL = model.ShortURL("A1Qd8pEs")
-	mailLongURL  = model.LongURL("https://mail.ru")
+	mailLongURL = model.NewLongURL("https://mail.ru")
 
-	goLongURL = model.LongURL("https://go.dev")
+	goLongURL = model.NewLongURL("https://go.dev")
 
-	someShortURL = model.ShortURL("0000ZZZZ")
+	someShortURL = model.NewShortURL("0000ZZZZ")
 )
 
-func (suite *MapBasedDBTestSuite) SetupSuite() {
-	suite.storage = repository.ProvideURLStorage()
-	suite.storage.Add(yandexShortURL, yandexLongURL)
-	if url, err := suite.storage.Get(yandexShortURL); err != nil || url != yandexLongURL {
-		suite.T().Fatal("Ошибка подготовки тестовых данных")
+func (s *MapBasedDBTestSuite) SetupTest() {
+	s.storage = NewURLStorage(0)
+	res, err := s.storage.ShortenAndStore(yandexLongURL)
+	if err != nil {
+		s.T().Fatal("Ошибка подготовки тестовых данных")
 	}
+	yandexShortURL = res
 }
 
 func (suite *MapBasedDBTestSuite) TestGetValueNotFound() {
-	longURL, err := suite.storage.Get(someShortURL)
-	suite.NotNil(err)
+	longURL, ok := suite.storage.Resolve(someShortURL)
+	suite.False(ok)
 	suite.Equal(longURL, model.EmptyLongURL)
 }
 
 func (suite *MapBasedDBTestSuite) TestGetExistingValue() {
-	longURL, err := suite.storage.Get(yandexShortURL)
-	suite.Nil(err)
+	longURL, ok := suite.storage.Resolve(yandexShortURL)
+	suite.True(ok)
 	suite.Equal(longURL, yandexLongURL)
 }
 
 func (suite *MapBasedDBTestSuite) TestAddValue() {
-	_, err := suite.storage.Get(mailShortURL)
-	suite.Require().NotNil(err)
+	_, ok := suite.storage.find(mailLongURL)
+	suite.Require().False(ok)
 
-	err = suite.storage.Add(mailShortURL, mailLongURL)
-	suite.Require().Nil(err)
+	mailShortURL, err := suite.storage.ShortenAndStore(mailLongURL)
+	suite.Require().NoError(err)
+	suite.Require().NoError(base62.ValidateBase62(mailShortURL.String()))
 
-	url, err := suite.storage.Get(mailShortURL)
+	url, ok := suite.storage.Resolve(mailShortURL)
+	suite.Require().True(ok)
 	suite.Equal(url, mailLongURL)
 }
 
 func (suite *MapBasedDBTestSuite) TestFindNotPresentValue() {
-	shortURL, found := suite.storage.Find(goLongURL)
+	shortURL, found := suite.storage.find(goLongURL)
 	suite.False(found)
 	suite.Equal(shortURL, model.EmptyShortURL)
 }
 
 func (suite *MapBasedDBTestSuite) TestFindExistingValue() {
-	shortURL, found := suite.storage.Find(yandexLongURL)
+	shortURL, found := suite.storage.find(yandexLongURL)
 	suite.True(found)
 	suite.Equal(shortURL, yandexShortURL)
 }
