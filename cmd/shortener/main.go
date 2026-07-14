@@ -14,6 +14,6 @@ func main() {
 
 func run() error {
 	cfg := config.ConfigureApplication()
-	rtr := handler.CreateRouter(cfg.Storage, cfg.TargetURLBase)
-	return http.ListenAndServe(cfg.ServerRunAddress, rtr)
+	ctx := handler.NewRouterContext(cfg.Storage, cfg.TargetURLBase)
+	return http.ListenAndServe(cfg.ServerRunAddress, ctx)
 }

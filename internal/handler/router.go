@@ -8,27 +8,35 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/m-j-majevsky/url-shortener/internal/base62"
-	"github.com/m-j-majevsky/url-shortener/internal/model"
+	"github.com/m-j-majevsky/url-shortener/internal/repository"
 	"github.com/m-j-majevsky/url-shortener/internal/service"
 )
 
-var (
-	storage model.URLStorage
+type RouterContext struct {
+	router  *chi.Mux
+	storage repository.URLStorage
 	baseURL string
-)
+}
 
-func CreateRouter(s model.URLStorage, targetURLBase string) http.Handler {
-	storage = s
-	baseURL = targetURLBase
+func (rc RouterContext) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	rc.router.ServeHTTP(w, r)
+}
 
+func NewRouterContext(s repository.URLStorage, targetBaseURL string) RouterContext {
 	r := chi.NewRouter()
+
+	ctx := RouterContext{
+		router:  r,
+		storage: s,
+		baseURL: targetBaseURL,
+	}
 
 	r.Group(func(r chi.Router) {
 		r.Use(contentTypeMiddleware)
-		r.Post("/", shortenLongURL)
+		r.Post("/", ctx.shortenLongURL)
 	})
 
-	r.Get("/{token}", resolveShortURL)
+	r.Get("/{token}", ctx.resolveShortURL)
 
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "недопустимый путь в URL", http.StatusBadRequest)
@@ -38,7 +46,7 @@ func CreateRouter(s model.URLStorage, targetURLBase string) http.Handler {
 		http.Error(w, "недопустимый метод", http.StatusBadRequest)
 	})
 
-	return r
+	return ctx
 }
 
 func contentTypeMiddleware(next http.Handler) http.Handler {
@@ -48,23 +56,23 @@ func contentTypeMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func resolveShortURL(w http.ResponseWriter, r *http.Request) {
+func (ctx *RouterContext) resolveShortURL(w http.ResponseWriter, r *http.Request) {
 	token := chi.URLParam(r, "token")
 	if err := base62.ValidateBase62(token); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	longURL, err := service.ResolveShortURL(storage, model.ShortURL(token))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	longURL, found := service.ResolveShortURL(ctx.storage, token)
+	if !found {
+		http.Error(w, "URL не зарегистрирован", http.StatusBadRequest)
 		return
 	}
 
-	http.Redirect(w, r, string(longURL), http.StatusTemporaryRedirect)
+	http.Redirect(w, r, longURL, http.StatusTemporaryRedirect)
 }
 
-func shortenLongURL(w http.ResponseWriter, r *http.Request) {
+func (ctx *RouterContext) shortenLongURL(w http.ResponseWriter, r *http.Request) {
 	bodyBytes, err := io.ReadAll(r.Body)
 
 	if err != nil {
@@ -77,13 +85,13 @@ func shortenLongURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, shortenerErr := service.ShortenURL(storage, model.LongURL(bodyBytes))
+	token, shortenerErr := service.ShortenURL(ctx.storage, string(bodyBytes))
 	if shortenerErr != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
-	shortURL := fmt.Sprintf("%s/%s", baseURL, token)
+	shortURL := fmt.Sprintf("%s/%s", ctx.baseURL, token)
 
 	w.WriteHeader(http.StatusCreated)
 	io.WriteString(w, shortURL)

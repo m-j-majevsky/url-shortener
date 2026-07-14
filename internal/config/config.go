@@ -3,20 +3,19 @@ package config
 import (
 	"flag"
 
-	"github.com/m-j-majevsky/url-shortener/internal/model"
 	"github.com/m-j-majevsky/url-shortener/internal/repository"
 )
 
 type ApplicationConfig struct {
 	ServerRunAddress string
 	TargetURLBase    string
-	Storage          model.URLStorage
+	Storage          repository.URLStorage
 }
 
 func ConfigureApplication() ApplicationConfig {
 	config := ApplicationConfig{}
 
-	config.Storage = repository.ProvideURLStorage()
+	config.Storage = repository.NewURLStorage(0)
 
 	parseFlags(&config)
 

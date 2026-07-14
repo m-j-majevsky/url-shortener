@@ -1,24 +1,26 @@
 package model
 
 type LongURL string
+
+func (lu *LongURL) String() string {
+	return string(*lu)
+}
+
+func NewLongURL(value string) LongURL {
+	return LongURL(value)
+}
+
 type ShortURL string
+
+func (su *ShortURL) String() string {
+	return string(*su)
+}
+
+func NewShortURL(value string) ShortURL {
+	return ShortURL(value)
+}
 
 const (
 	EmptyShortURL = ShortURL("")
 	EmptyLongURL  = LongURL("")
 )
-
-type URLStorageError struct {
-	Message string
-}
-
-func (e *URLStorageError) Error() string {
-	return e.Message
-}
-
-type URLStorage interface {
-	Add(key ShortURL, value LongURL) *URLStorageError
-	Get(key ShortURL) (LongURL, *URLStorageError)
-	Find(value LongURL) (ShortURL, bool)
-	Remove(key ShortURL)
-}

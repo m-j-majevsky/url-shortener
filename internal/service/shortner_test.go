@@ -11,74 +11,59 @@ import (
 	"github.com/m-j-majevsky/url-shortener/internal/service"
 )
 
-const (
-	yandexShortURL = model.ShortURL("ZcVp01GT")
-	yandexLongURL  = model.LongURL("https://yandex.ru")
+var (
+	yandexShortURL string
+	yandexLongURL  = "https://yandex.ru"
 
-	mailLongURL = model.LongURL("https://mail.ru")
-	goLongURL   = model.LongURL("https://go.dev")
+	mailLongURL = "https://mail.ru"
+	goLongURL   = "https://go.dev"
 
-	aShortURL = model.ShortURL("1Z2Z3Z5Z")
+	aShortURL = "1Z2Z3Z5Z"
 )
 
 type ShortenerTestSuite struct {
 	suite.Suite
-	storage model.URLStorage
+	storage repository.URLStorage
 }
 
 func TestShortenerTestSuite(t *testing.T) {
 	suite.Run(t, new(ShortenerTestSuite))
 }
 
-func (suite *ShortenerTestSuite) SetupSuite() {
-	suite.storage = repository.ProvideURLStorage()
-	db := suite.storage
-
-	if longURL, err := db.Get(yandexShortURL); err == nil && longURL == yandexLongURL {
-		// Валидные тестовые данные уже присутствуют, можно работать
-		return
-	}
-
-	if err := db.Add(yandexShortURL, yandexLongURL); err != nil {
-		suite.T().Fatal("Невозможно добавить тестовые данные")
-	}
-
-	longURL, err := db.Get(yandexShortURL)
+func (s *ShortenerTestSuite) SetupTest() {
+	s.storage = repository.NewURLStorage(0)
+	res, err := s.storage.ShortenAndStore(model.NewLongURL(yandexLongURL))
 	if err != nil {
-		suite.T().Fatal("Ошибка извлечения тестовых данных")
+		s.T().Fatal("Ошибка подготовки тестовых данных")
 	}
-	if longURL != yandexLongURL {
-		suite.T().Fatal("Неверные тестовые данные")
+	yandexShortURL = res.String()
+	db := s.storage
+
+	longURL, ok := db.Resolve(model.NewShortURL(yandexShortURL))
+	if !ok {
+		s.T().Fatal("Ошибка извлечения тестовых данных")
+	}
+	if longURL.String() != yandexLongURL {
+		s.T().Fatal("Неверные тестовые данные")
 	}
 }
 
-func (suite *ShortenerTestSuite) TestShortenningAlreadyShortenURL() {
-	shortURL, err := service.ShortenURL(suite.storage, yandexLongURL)
-	suite.Require().Nil(err)
-	suite.Equal(shortURL, yandexShortURL)
-}
-
-func (suite *ShortenerTestSuite) TestShortenURLWithNoErrorForValidInput() {
+func (suite *ShortenerTestSuite) TestShortenURLHappyPath() {
 	shortURL, err := service.ShortenURL(suite.storage, mailLongURL)
-	suite.Require().Nil(err)
+	suite.Require().NoError(err)
 	suite.NotEqual(shortURL, model.EmptyShortURL)
-}
-
-func (suite *ShortenerTestSuite) TestShortenURLResultTokenValidity() {
-	shortURL, err := service.ShortenURL(suite.storage, goLongURL)
-	suite.Require().Nil(err)
-	suite.Require().Equal(service.TokenLength, len(shortURL))
-	suite.Nil(base62.ValidateBase62(string(shortURL)))
+	suite.NoError(base62.ValidateBase62(shortURL))
+	suite.Equal(len(shortURL), base62.TokenLength)
 }
 
 func (suite *ShortenerTestSuite) TestResolveExistingShortURL() {
-	longURL, err := service.ResolveShortURL(suite.storage, yandexShortURL)
-	suite.Require().Nil(err)
+	longURL, found := service.ResolveShortURL(suite.storage, yandexShortURL)
+	suite.Require().True(found)
 	suite.Equal(longURL, yandexLongURL)
 }
 
 func (suite *ShortenerTestSuite) TestResolveNotExistingShortURL() {
-	longURL, err := service.ResolveShortURL(suite.storage, aShortURL)
-	suite.Require().NotNil(err)
-	suite.Equal(longURL, model.EmptyLongURL)
+	longURL, found := service.ResolveShortURL(suite.storage, aShortURL)
+	suite.Require().False(found)
+	suite.Equal(longURL, "")
 }

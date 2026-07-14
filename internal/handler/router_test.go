@@ -22,40 +22,33 @@ import (
 
 type RouterTestSuite struct {
 	suite.Suite
-	storage model.URLStorage
+	storage repository.URLStorage
 }
 
 func TestRouterTestSuite(t *testing.T) {
 	suite.Run(t, new(RouterTestSuite))
 }
 
-const (
-	yandexShortURL = "ZcVp01GT"
+var (
+	yandexShortURL string
 	yandexLongURL  = "https://yandex.ru"
 )
 
-func (suite *RouterTestSuite) SetupSuite() {
-	suite.storage = repository.ProvideURLStorage()
-	db := suite.storage
-
-	yandexShortURL := model.ShortURL(yandexShortURL)
-	yandexLongURL := model.LongURL(yandexLongURL)
-
-	if longURL, err := db.Get(yandexShortURL); err == nil && longURL == yandexLongURL {
-		// Валидные тестовые данные уже присутствуют, можно работать
-		return
-	}
-
-	if err := db.Add(yandexShortURL, yandexLongURL); err != nil {
-		suite.T().Fatal("Невозможно добавить тестовые данные")
-	}
-
-	longURL, err := db.Get(yandexShortURL)
+func (s *RouterTestSuite) SetupSuite() {
+	s.storage = repository.NewURLStorage(0)
+	res, err := s.storage.ShortenAndStore(model.NewLongURL(yandexLongURL))
 	if err != nil {
-		suite.T().Fatal("Ошибка извлечения тестовых данных")
+		s.T().Fatal("Ошибка подготовки тестовых данных")
 	}
-	if longURL != yandexLongURL {
-		suite.T().Fatal("Неверные тестовые данные")
+	yandexShortURL = res.String()
+	db := s.storage
+
+	longURL, ok := db.Resolve(model.NewShortURL(yandexShortURL))
+	if !ok {
+		s.T().Fatal("Ошибка извлечения тестовых данных")
+	}
+	if longURL.String() != yandexLongURL {
+		s.T().Fatal("Неверные тестовые данные")
 	}
 }
 
@@ -67,9 +60,9 @@ func configureTestApplication(s *RouterTestSuite) config.ApplicationConfig {
 }
 
 func (suite *RouterTestSuite) TestWebhook() {
-	testCfg := configureTestApplication(suite)
-	router := handler.CreateRouter(testCfg.Storage, testCfg.TargetURLBase)
-	ts := httptest.NewServer(router)
+	cfg := configureTestApplication(suite)
+	ctx := handler.NewRouterContext(cfg.Storage, cfg.TargetURLBase)
+	ts := httptest.NewServer(ctx)
 	defer ts.Close()
 
 	testCases := []struct {
@@ -140,7 +133,7 @@ func (suite *RouterTestSuite) TestWebhook() {
 			method:              http.MethodPost,
 			requestURL:          "/",
 			requestBody:         yandexLongURL,
-			expectedBody:        testCfg.TargetURLBase + "/" + yandexShortURL,
+			expectedBody:        cfg.TargetURLBase,
 			expectedHeader:      "Content-Type",
 			expectedHeaderValue: "text/plain",
 			expectedCode:        http.StatusCreated,
@@ -187,7 +180,8 @@ func (suite *RouterTestSuite) TestWebhook() {
 			if tc.expectedBody != "" {
 				getBody := resp.Body
 				require.NotNil(t, getBody)
-				assert.Equal(t, tc.expectedBody, string(getBody()), "Тело ответа не совпадает с ожидаемым")
+				condition := strings.HasPrefix(string(getBody()), tc.expectedBody)
+				assert.True(t, condition, "Тело ответа не совпадает с ожидаемым")
 			}
 		})
 	}

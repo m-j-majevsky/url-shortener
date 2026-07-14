@@ -1,60 +1,79 @@
 package repository
 
 import (
+	"errors"
+	"sync"
+
+	"github.com/m-j-majevsky/url-shortener/internal/base62"
 	"github.com/m-j-majevsky/url-shortener/internal/model"
 )
 
 type storageImpl struct {
-	db map[string]string
+	mu    sync.Mutex
+	count int64
+
+	// Пока не переехали в Postgres будем хранить значения в памяти
+	store map[string]string
 }
 
 var (
-	storage storageImpl
+	ErrTokenNotFound  = errors.New("repository: токен не найден")
+	ErrURLShortenning = errors.New("repository: ошибка кодирования длинного URL")
 )
 
-func init() {
-	storage.db = make(map[string]string)
+type URLStorage interface {
+	ShortenAndStore(value model.LongURL) (model.ShortURL, error)
+	Resolve(key model.ShortURL) (model.LongURL, bool)
+	find(value model.LongURL) (model.ShortURL, bool)
 }
 
-func ProvideURLStorage() model.URLStorage {
-	return &storage
-}
-
-func (s *storageImpl) Add(key model.ShortURL, value model.LongURL) *model.URLStorageError {
-	shortURL := string(key)
-	longURL := string(value)
-	s.db[shortURL] = longURL
-
-	// В этой реализации специальных ошибок model.URLStorageError
-	// в случае добавления в базу не предвидится
-	return nil
-}
-
-func (s *storageImpl) Get(key model.ShortURL) (model.LongURL, *model.URLStorageError) {
-	shortURL := string(key)
-	longURLString, ok := s.db[shortURL]
-	if !ok {
-		return model.EmptyLongURL, &model.URLStorageError{
-			Message: "токен не найден",
-		}
+func NewURLStorage(startCount int64) URLStorage {
+	return &storageImpl{
+		count: startCount,
+		store: make(map[string]string),
 	}
-	return model.LongURL(longURLString), nil
 }
 
-func (s *storageImpl) Find(value model.LongURL) (model.ShortURL, bool) {
-	longURL := string(value)
-	for token, url := range s.db {
-		if url == longURL {
-			return model.ShortURL(token), true
+func (s *storageImpl) ShortenAndStore(value model.LongURL) (model.ShortURL, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	id := s.count
+	token, err := base62.EncodeInt64ToBase62Fixed(id)
+	if err != nil {
+		return model.EmptyShortURL, errors.Join(ErrURLShortenning, err)
+	}
+
+	s.store[token] = value.String()
+	s.count++
+
+	return model.NewShortURL(token), nil
+}
+
+func (s *storageImpl) Resolve(key model.ShortURL) (model.LongURL, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	val, ok := s.store[key.String()]
+
+	return model.NewLongURL(val), ok
+}
+
+// Это дорогая реализация, т.к. потенциально лочит базу на время полного перебора её содержимого,
+// но посколько в будущем предстоит переезд в Postgres, заморачиваться на собственную реализацию
+// более аккуратного подхода, например, с индексом LongURL -> Short URL пока не стану
+//
+// С другой стороны явного требования выдавать те же самые сокращения на ранее запрошенные URL'ы нет,
+// и пока логика используется только для тестового сценария
+func (s *storageImpl) find(value model.LongURL) (model.ShortURL, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	val := value.String()
+	for token, url := range s.store {
+		if url == val {
+			return model.NewShortURL(token), true
 		}
 	}
 	return model.EmptyShortURL, false
-}
-
-func (s *storageImpl) Remove(key model.ShortURL) {
-	shortURL := string(key)
-	delete(s.db, string(shortURL))
-
-	// В этой реализации специальных ошибок model.URLStorageError
-	// в случае удаления из базы не предвидится
 }
