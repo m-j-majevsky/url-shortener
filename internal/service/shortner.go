@@ -49,7 +49,11 @@ func ShortenURL(s model.URLStorage, longURL model.LongURL) (model.ShortURL, *mod
 	}
 
 	shortURL := model.ShortURL(token)
-	s.Add(shortURL, longURL)
+	if err := s.Add(shortURL, longURL); err != nil {
+		return model.EmptyShortURL, &model.URLStorageError{
+			Message: "ошибка операции добавления данных в хранилище",
+		}
+	}
 	return shortURL, nil
 }
 
