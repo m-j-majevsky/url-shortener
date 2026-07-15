@@ -2,6 +2,7 @@ package config
 
 import (
 	"flag"
+	"os"
 
 	"github.com/m-j-majevsky/url-shortener/internal/repository"
 )
@@ -18,6 +19,14 @@ func ConfigureApplication() ApplicationConfig {
 	config.Storage = repository.NewURLStorage(0)
 
 	parseFlags(&config)
+
+	if envServAddr := os.Getenv("SERVER_ADDRESS"); envServAddr != "" {
+		config.ServerRunAddress = envServAddr
+	}
+
+	if envBaseUrl := os.Getenv("BASE_URL"); envBaseUrl != "" {
+		config.TargetURLBase = envBaseUrl
+	}
 
 	return config
 }
