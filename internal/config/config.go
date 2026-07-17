@@ -3,27 +3,27 @@ package config
 import (
 	"flag"
 
-	"github.com/m-j-majevsky/url-shortener/internal/repository"
+	"github.com/m-j-majevsky/url-shortener/internal/service"
 )
 
 type ApplicationConfig struct {
 	ServerRunAddress string
-	TargetURLBase    string
-	Storage          repository.URLStorage
+	TargetBaseURL    string
+	ServiceConfig    service.ShortenerConfig
 }
 
-func ConfigureApplication() ApplicationConfig {
-	config := ApplicationConfig{}
+func MakeApplicationConfig() ApplicationConfig {
+	svcConfig := service.DefaultShortenerConfig()
 
-	config.Storage = repository.NewURLStorage(0)
+	appConfig := ApplicationConfig{ServiceConfig: svcConfig}
 
-	parseFlags(&config)
+	parseFlags(&appConfig)
 
-	return config
+	return appConfig
 }
 
 func parseFlags(cfg *ApplicationConfig) {
 	flag.StringVar(&cfg.ServerRunAddress, "a", ":8080", "address and port to run server")
-	flag.StringVar(&cfg.TargetURLBase, "b", "http://localhost:8080", "address and port to run server")
+	flag.StringVar(&cfg.TargetBaseURL, "b", "http://localhost:8080", "target URL base path")
 	flag.Parse()
 }

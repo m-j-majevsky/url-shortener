@@ -1,26 +1,15 @@
 package model
 
-type LongURL string
+type URL string
 
-func (lu *LongURL) String() string {
+func (lu *URL) String() string {
 	return string(*lu)
 }
 
-func NewLongURL(value string) LongURL {
-	return LongURL(value)
-}
-
-type ShortURL string
-
-func (su *ShortURL) String() string {
-	return string(*su)
-}
-
-func NewShortURL(value string) ShortURL {
-	return ShortURL(value)
+func NewURL(value string) URL {
+	return URL(value)
 }
 
 const (
-	EmptyShortURL = ShortURL("")
-	EmptyLongURL  = LongURL("")
+	EmptyURL = URL("")
 )
