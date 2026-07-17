@@ -5,70 +5,61 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/m-j-majevsky/url-shortener/internal/base62"
 	"github.com/m-j-majevsky/url-shortener/internal/model"
 )
 
 type MapBasedDBTestSuite struct {
 	suite.Suite
-	storage URLStorage
+	storage *Storage
 }
 
 var (
-	yandexShortURL model.ShortURL
-	yandexLongURL  = model.NewLongURL("https://yandex.ru")
+	yandexToken = "sPv80uUs"
+	yandexURL   = model.NewURL("https://yandex.ru")
 
-	mailLongURL = model.NewLongURL("https://mail.ru")
+	mailToken = "9aF7e72i"
+	mailURL   = model.NewURL("https://mail.ru")
 
-	goLongURL = model.NewLongURL("https://go.dev")
+	goURL = model.NewURL("https://go.dev")
 
-	someShortURL = model.NewShortURL("0000ZZZZ")
+	someToken = "0000ZZZZ"
 )
 
 func (s *MapBasedDBTestSuite) SetupTest() {
-	s.storage = NewURLStorage(0)
-	res, err := s.storage.ShortenAndStore(yandexLongURL)
-	if err != nil {
-		s.T().Fatal("Ошибка подготовки тестовых данных")
+	s.storage = NewStorage()
+	if err := s.storage.Store(yandexToken, yandexURL); err != nil {
+		s.T().Fatalf("Ошибка подготовки тестовых данных: %s", err.Error())
 	}
-	yandexShortURL = res
 }
 
-func (suite *MapBasedDBTestSuite) TestGetValueNotFound() {
-	longURL, ok := suite.storage.Resolve(someShortURL)
+func (suite *MapBasedDBTestSuite) TestUnresolvedToken() {
+	url, ok := suite.storage.Resolve(someToken)
 	suite.False(ok)
-	suite.Equal(longURL, model.EmptyLongURL)
+	suite.Equal(model.EmptyURL, url)
 }
 
-func (suite *MapBasedDBTestSuite) TestGetExistingValue() {
-	longURL, ok := suite.storage.Resolve(yandexShortURL)
+func (suite *MapBasedDBTestSuite) TestResolveSuccess() {
+	url, ok := suite.storage.Resolve(yandexToken)
 	suite.True(ok)
-	suite.Equal(longURL, yandexLongURL)
+	suite.Equal(yandexURL, url)
 }
 
-func (suite *MapBasedDBTestSuite) TestAddValue() {
-	_, ok := suite.storage.find(mailLongURL)
-	suite.Require().False(ok)
+func (suite *MapBasedDBTestSuite) TestStoreWithErrTokenTaken() {
+	err := suite.storage.Store(yandexToken, goURL)
+	suite.Require().Error(err)
+	var errTT *ErrTokenTaken
+	suite.ErrorAs(err, &errTT)
+	suite.Equal(yandexToken, errTT.Token)
+	suite.Contains(errTT.Error(), "занят")
+}
 
-	mailShortURL, err := suite.storage.ShortenAndStore(mailLongURL)
+func (suite *MapBasedDBTestSuite) TestStore() {
+	err := suite.storage.Store(mailToken, mailURL)
 	suite.Require().NoError(err)
-	suite.Require().NoError(base62.ValidateBase62(mailShortURL.String()))
 
-	url, ok := suite.storage.Resolve(mailShortURL)
+	url, ok := suite.storage.Resolve(mailToken)
 	suite.Require().True(ok)
-	suite.Equal(url, mailLongURL)
-}
-
-func (suite *MapBasedDBTestSuite) TestFindNotPresentValue() {
-	shortURL, found := suite.storage.find(goLongURL)
-	suite.False(found)
-	suite.Equal(shortURL, model.EmptyShortURL)
-}
-
-func (suite *MapBasedDBTestSuite) TestFindExistingValue() {
-	shortURL, found := suite.storage.find(yandexLongURL)
-	suite.True(found)
-	suite.Equal(shortURL, yandexShortURL)
+	suite.Equal(mailURL, url)
 }
 
 func TestMapBasedDBTestSuite(t *testing.T) {
