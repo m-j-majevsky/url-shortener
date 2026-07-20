@@ -2,6 +2,7 @@ package config
 
 import (
 	"flag"
+	"os"
 
 	"github.com/m-j-majevsky/url-shortener/internal/service"
 )
@@ -18,6 +19,14 @@ func MakeApplicationConfig() ApplicationConfig {
 	appConfig := ApplicationConfig{ServiceConfig: svcConfig}
 
 	parseFlags(&appConfig)
+
+	if envServAddr := os.Getenv("SERVER_ADDRESS"); envServAddr != "" {
+		appConfig.ServerRunAddress = envServAddr
+	}
+
+	if envBaseUrl := os.Getenv("BASE_URL"); envBaseUrl != "" {
+		appConfig.TargetBaseURL = envBaseUrl
+	}
 
 	return appConfig
 }
