@@ -13,3 +13,13 @@ func NewURL(value string) URL {
 const (
 	EmptyURL = URL("")
 )
+
+type (
+	PostApiShortenReq struct {
+		URL string `json:"url" valid:"url,required"`
+	}
+
+	PostApiShortenRes struct {
+		Result string `json:"result"`
+	}
+)
