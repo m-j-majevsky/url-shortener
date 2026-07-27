@@ -40,5 +40,5 @@ func run(cfg config.ApplicationConfig) error {
 
 	logger.Log.Info("Running server", zap.String("address", cfg.ServerRunAddress))
 
-	return http.ListenAndServe(cfg.ServerRunAddress, logger.WithLogging(rt))
+	return http.ListenAndServe(cfg.ServerRunAddress, logger.WithLogging(handler.GzipMiddleware(rt)))
 }

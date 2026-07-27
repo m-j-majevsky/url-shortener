@@ -41,14 +41,14 @@ func NewRouter(svc URLShortener, targetBaseURL string) Router {
 
 	cr.Group(func(cr chi.Router) {
 		cr.Use(func(next http.Handler) http.Handler {
-			return responseContentTypeMiddleware(next, "text/plain")
+			return responseContentTypeMiddleware(next, TextPlain)
 		})
 		cr.Post("/", mux.shortenLongURLForText)
 	})
 
 	cr.Group(func(cr chi.Router) {
 		cr.Use(func(next http.Handler) http.Handler {
-			return responseContentTypeMiddleware(next, "application/json")
+			return responseContentTypeMiddleware(next, AppJson)
 		})
 		cr.Post("/api/shorten", mux.shortenLongURLForJson)
 	})
@@ -64,13 +64,6 @@ func NewRouter(svc URLShortener, targetBaseURL string) Router {
 	})
 
 	return mux
-}
-
-func responseContentTypeMiddleware(next http.Handler, ct string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", ct)
-		next.ServeHTTP(w, r)
-	})
 }
 
 func (rt *Router) resolveShortURL(w http.ResponseWriter, r *http.Request) {
@@ -118,7 +111,7 @@ func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) 
 }
 
 func (rt *Router) shortenLongURLForJson(w http.ResponseWriter, r *http.Request) {
-	if rct := r.Header.Get("Content-Type"); rct != "application/json" {
+	if rct := r.Header.Get(ContentType); rct != AppJson {
 		logger.Log.Debug("wrong request Content-Type: " + rct)
 		http.Error(w, "ожидается запрос с заголовком Content-Type: application/json", http.StatusBadRequest)
 		return
