@@ -2,6 +2,16 @@ package model
 
 import "encoding/json"
 
+type (
+	PostApiShortenReq struct {
+		URL string `json:"url" valid:"url,required"`
+	}
+
+	PostApiShortenRes struct {
+		Result string `json:"result"`
+	}
+)
+
 type URL string
 
 func (lu *URL) String() string {
@@ -18,7 +28,6 @@ const (
 
 // Реализуем интерфейс json.Marshaler
 func (u URL) MarshalJSON() ([]byte, error) {
-	// Просто оборачиваем строку в кавычки — это валидный JSON для строки
 	return json.Marshal(string(u))
 }
 
@@ -31,13 +40,3 @@ func (u *URL) UnmarshalJSON(data []byte) error {
 	*u = URL(s)
 	return nil
 }
-
-type (
-	PostApiShortenReq struct {
-		URL string `json:"url" valid:"url,required"`
-	}
-
-	PostApiShortenRes struct {
-		Result string `json:"result"`
-	}
-)
