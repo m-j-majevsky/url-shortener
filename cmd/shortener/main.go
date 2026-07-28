@@ -32,15 +32,16 @@ func main() {
 
 	storage, err := LoadStorage(cfg.FileStoragePath)
 	if err != nil {
-		logger.Log.Fatal(err.Error(), zap.String("event", "prepare storage"))
+		logger.Log.Fatal(err.Error(), zap.String("event", "preparing storage"))
 	}
 	cfg.ServiceConfig.Storage = storage
 
-	handler, err := prepareHandler(cfg)
+	handler, err := makeServiceAndRouter(cfg)
 	if err != nil {
 		logger.Log.Fatal(err.Error(), zap.String("event", "initializing service"))
 	}
 
+	// Создаем сервер явно, поскольку ссылку на него придется использовать для shutdown'а по сигналу от ОС
 	server := &http.Server{
 		Addr:    cfg.ServerRunAddress,
 		Handler: handler,
@@ -61,7 +62,7 @@ func main() {
 	go handleShutdownSignals(cfg, cancel, storage, server, sigChan)
 
 	// Запускаем фоном таймер автосохранения
-	go saveStateOnTicker(ctx, storage, cfg.FileStoragePath, cfg.SaveStatePeriod)
+	go saveStateOnTicker(ctx, storage, cfg.FileStoragePath, cfg.SaveStateInterval)
 
 	// Плюс, регистрируем отложенное гарантированное сохранение при любом исходе
 	defer saveStateDeferred(storage, cfg.FileStoragePath)
@@ -69,7 +70,7 @@ func main() {
 	// Блокируем main, пока не придёт сигнал
 	<-ctx.Done()
 
-	logger.Log.Info("Application shutting down gracefully", zap.String("event", "successfull exit"))
+	logger.Log.Info("Application shutting down gracefully", zap.String("event", "shutdown complete"))
 }
 
 func LoadStorage(storagePath string) (*repository.Storage, error) {
@@ -79,16 +80,16 @@ func LoadStorage(storagePath string) (*repository.Storage, error) {
 
 	err := storage.LoadFromFile(storagePath)
 	if err == nil {
-		logger.Log.Info("Storage loaded successfully", zap.String("path", storagePath), event)
+		logger.Log.Info("Storage read successfully", zap.String("path", storagePath), event)
 		return storage, nil
 	}
 
-	if !os.IsNotExist(err) {
-		return nil, err
+	if errors.Is(err, os.ErrNotExist) {
+		logger.Log.Info("Storage file not found, starting with empty storage", zap.String("path", storagePath), event)
+		return storage, nil
 	}
 
-	logger.Log.Info("Storage file not found, starting with empty storage", zap.String("path", storagePath), event)
-	return storage, nil
+	return nil, err
 }
 
 // Обработка сигналов SIGINT/SIGTERM
@@ -156,7 +157,7 @@ func saveStateDeferred(storage *repository.Storage, path string) {
 	}
 }
 
-func prepareHandler(cfg config.ApplicationConfig) (http.Handler, error) {
+func makeServiceAndRouter(cfg config.ApplicationConfig) (http.Handler, error) {
 	svc, err := service.NewShortener(cfg.ServiceConfig)
 	if err != nil {
 		return nil, err

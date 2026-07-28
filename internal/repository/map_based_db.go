@@ -18,7 +18,7 @@ func NewTokenToURL() TokenToURL {
 type Storage struct {
 	mu sync.Mutex
 
-	Data TokenToURL `json:"data,omitempty"`
+	Data TokenToURL
 }
 
 func NewStorage() *Storage {
@@ -27,7 +27,7 @@ func NewStorage() *Storage {
 	}
 }
 
-// SaveToFile сохраняет текущее состояние Storage в JSON-файл.
+// Сохраняет текущее состояние Storage в JSON-файл.
 func (s *Storage) SaveToFile(path string) error {
 	// Блокировка нужна, чтобы не читать частично изменённые данные из Data.
 	s.mu.Lock()
@@ -35,26 +35,26 @@ func (s *Storage) SaveToFile(path string) error {
 
 	data, err := json.Marshal(s.Data)
 	if err != nil {
-		return fmt.Errorf("failed to marshal storage data: %w", err)
+		return fmt.Errorf("ошибка маршалинга данных из хранилища: %w", err)
 	}
 
 	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("failed to write file %q: %w", path, err)
+		return fmt.Errorf("ошибка записи в файл состояния хранилища: %w", err)
 	}
 	return nil
 }
 
-// LoadFromFile загружает данные из JSON-файла и заменяет ими текущее содержимое Data.
+// Загружает данные из JSON-файла и заменяет ими текущее содержимое Data.
 // Важно: эта функция перезаписывает мапу, а не мёржит её.
 func (s *Storage) LoadFromFile(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("failed to read file %q: %w", path, err)
+		return fmt.Errorf("ошибка чтения файла состояния хранилища: %w", err)
 	}
 
 	var loadedData TokenToURL
 	if err := json.Unmarshal(data, &loadedData); err != nil {
-		return fmt.Errorf("failed to unmarshal storage data: %w", err)
+		return fmt.Errorf("ошибка декодирования содержимого файла состояния хранилища: %w", err)
 	}
 
 	s.mu.Lock()
