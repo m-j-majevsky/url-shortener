@@ -7,12 +7,6 @@ import (
 	"strings"
 )
 
-const (
-	ContentType = "Content-Type"
-	AppJson     = "application/json"
-	TextPlain   = "text/plain"
-)
-
 func responseContentTypeMiddleware(next http.Handler, ct string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(ContentType, ct)

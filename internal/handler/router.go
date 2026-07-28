@@ -15,6 +15,12 @@ import (
 	"github.com/m-j-majevsky/url-shortener/internal/model"
 )
 
+const (
+	ContentType = "Content-Type"
+	AppJson     = "application/json"
+	TextPlain   = "text/plain"
+)
+
 type URLShortener interface {
 	GenerateAndStore(longURL string) (string, error)
 	Resolve(token string) (string, bool)
