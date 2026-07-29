@@ -18,22 +18,22 @@ func NewTokenToURL() TokenToURL {
 type Storage struct {
 	mu sync.Mutex
 
-	Data TokenToURL
+	data TokenToURL
 }
 
 func NewStorage() *Storage {
 	return &Storage{
-		Data: NewTokenToURL(),
+		data: NewTokenToURL(),
 	}
 }
 
 // Сохраняет текущее состояние Storage в JSON-файл.
 func (s *Storage) SaveToFile(path string) error {
-	// Блокировка нужна, чтобы не читать частично изменённые данные из Data.
+	// Блокировка нужна, чтобы не читать частично изменённые данные из data.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	data, err := json.Marshal(s.Data)
+	data, err := json.Marshal(s.data)
 	if err != nil {
 		return fmt.Errorf("ошибка маршалинга данных из хранилища: %w", err)
 	}
@@ -44,7 +44,7 @@ func (s *Storage) SaveToFile(path string) error {
 	return nil
 }
 
-// Загружает данные из JSON-файла и заменяет ими текущее содержимое Data.
+// Загружает данные из JSON-файла и заменяет ими текущее содержимое data.
 // Важно: эта функция перезаписывает мапу, а не мёржит её.
 func (s *Storage) LoadFromFile(path string) error {
 	data, err := os.ReadFile(path)
@@ -59,7 +59,7 @@ func (s *Storage) LoadFromFile(path string) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.Data = loadedData
+	s.data = loadedData
 	return nil
 }
 
@@ -83,10 +83,10 @@ func (s *Storage) Store(token string, longURL model.URL) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, exists := s.Data[token]; exists {
+	if _, exists := s.data[token]; exists {
 		return NewErrTokenTaken(token)
 	}
-	s.Data[token] = longURL
+	s.data[token] = longURL
 	return nil
 }
 
@@ -94,7 +94,7 @@ func (s *Storage) Resolve(token string) (model.URL, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	url, ok := s.Data[token]
+	url, ok := s.data[token]
 	if !ok {
 		return model.EmptyURL, false
 	}
