@@ -106,12 +106,6 @@ func handleShutdownSignals(
 
 	logger.Log.Info("Shutdown signal received", zap.String("signal", sig.String()), event)
 
-	if err := storage.SaveToFile(cfg.FileStoragePath); err != nil {
-		logger.Log.Error("Failed to save storage on shutdown", zap.Error(err), zap.String("path", cfg.FileStoragePath), event)
-	} else {
-		logger.Log.Info("Storage saved on shutdown", zap.String("path", cfg.FileStoragePath), event)
-	}
-
 	// Graceful shutdown сервера
 	shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer shutdownRelease()

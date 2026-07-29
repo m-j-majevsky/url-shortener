@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"sync"
 
 	"github.com/m-j-majevsky/url-shortener/internal/model"
@@ -27,13 +28,35 @@ func NewStorage() *Storage {
 	}
 }
 
+type (
+	itemRepr struct {
+		UUID        string    `json:"uuid"`
+		ShortURL    string    `json:"short_url"`
+		OriginalURL model.URL `json:"original_url"`
+	}
+
+	storageRepr []itemRepr
+)
+
+func (s *Storage) exportStorageRepr() storageRepr {
+	result := make(storageRepr, len(s.data))
+	var idx int = 1
+	for su, ou := range s.data {
+		result[idx-1] = itemRepr{UUID: strconv.Itoa(idx), ShortURL: su, OriginalURL: ou}
+		idx += 1
+	}
+	return result
+}
+
 // Сохраняет текущее состояние Storage в JSON-файл.
 func (s *Storage) SaveToFile(path string) error {
 	// Блокировка нужна, чтобы не читать частично изменённые данные из data.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	data, err := json.Marshal(s.data)
+	repr := s.exportStorageRepr()
+
+	data, err := json.Marshal(repr)
 	if err != nil {
 		return fmt.Errorf("ошибка маршалинга данных из хранилища: %w", err)
 	}
@@ -44,6 +67,13 @@ func (s *Storage) SaveToFile(path string) error {
 	return nil
 }
 
+func (s *Storage) importStorageRepr(repr storageRepr) {
+	s.data = make(TokenToURL, len(repr))
+	for _, item := range repr {
+		s.data[item.ShortURL] = item.OriginalURL
+	}
+}
+
 // Загружает данные из JSON-файла и заменяет ими текущее содержимое data.
 // Важно: эта функция перезаписывает мапу, а не мёржит её.
 func (s *Storage) LoadFromFile(path string) error {
@@ -52,14 +82,14 @@ func (s *Storage) LoadFromFile(path string) error {
 		return fmt.Errorf("ошибка чтения файла состояния хранилища: %w", err)
 	}
 
-	var loadedData TokenToURL
-	if err := json.Unmarshal(data, &loadedData); err != nil {
+	var loadedRepr storageRepr
+	if err := json.Unmarshal(data, &loadedRepr); err != nil {
 		return fmt.Errorf("ошибка декодирования содержимого файла состояния хранилища: %w", err)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data = loadedData
+	s.importStorageRepr(loadedRepr)
 	return nil
 }
 
