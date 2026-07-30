@@ -1,6 +1,9 @@
 package handler_test
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +20,7 @@ import (
 	"github.com/m-j-majevsky/url-shortener/internal/service"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -77,84 +81,84 @@ func (s *RouterTestSuite) TestWebhook() {
 	defer ts.Close()
 
 	testCases := []struct {
-		name                string
-		method              string
-		requestURL          string
-		requestBody         string
-		expectedBody        string
-		expectedHeader      string
-		expectedHeaderValue string
-		expectedCode        int
+		name             string
+		method           string
+		reqURL           string
+		reqBody          string
+		erResBody        string
+		erResHeader      string
+		erResHeaderValue string
+		erResCode        int
 	}{
 		// GET
 		{
-			name:         "невалидный URL (корень)",
-			method:       http.MethodGet,
-			requestURL:   "/",
-			expectedCode: http.StatusBadRequest,
+			name:      "невалидный URL (корень)",
+			method:    http.MethodGet,
+			reqURL:    "/",
+			erResCode: http.StatusBadRequest,
 		},
 		{
-			name:         "невалидный URL (содержит не ASCII символы)",
-			method:       http.MethodGet,
-			requestURL:   "/WasDΩ123",
-			expectedCode: http.StatusBadRequest,
+			name:      "невалидный URL (содержит не ASCII символы)",
+			method:    http.MethodGet,
+			reqURL:    "/WasDΩ123",
+			erResCode: http.StatusBadRequest,
 		},
 		{
-			name:         "невалидный URL (содержит ASCII символы не из base62)",
-			method:       http.MethodGet,
-			requestURL:   "/WasD01_3",
-			expectedCode: http.StatusBadRequest,
+			name:      "невалидный URL (содержит ASCII символы не из base62)",
+			method:    http.MethodGet,
+			reqURL:    "/WasD01_3",
+			erResCode: http.StatusBadRequest,
 		},
 		{
-			name:         "невалидный путь в URL",
-			method:       http.MethodGet,
-			requestURL:   "/token/WasD01_3",
-			expectedCode: http.StatusBadRequest,
+			name:      "невалидный путь в URL",
+			method:    http.MethodGet,
+			reqURL:    "/token/WasD01_3",
+			erResCode: http.StatusBadRequest,
 		},
 		{
-			name:         "валидный URL, но данные не найдены",
-			method:       http.MethodGet,
-			requestURL:   "/WasD0123",
-			expectedCode: http.StatusBadRequest,
+			name:      "валидный URL, но данные не найдены",
+			method:    http.MethodGet,
+			reqURL:    "/WasD0123",
+			erResCode: http.StatusBadRequest,
 		},
 		{
-			name:                "валидный URL, и данные найдены",
-			method:              http.MethodGet,
-			requestURL:          "/" + yandexToken,
-			expectedHeader:      "Location",
-			expectedHeaderValue: yandexLongURL,
-			expectedCode:        http.StatusTemporaryRedirect,
+			name:             "валидный URL, и данные найдены",
+			method:           http.MethodGet,
+			reqURL:           "/" + yandexToken,
+			erResHeader:      "Location",
+			erResHeaderValue: yandexLongURL,
+			erResCode:        http.StatusTemporaryRedirect,
 		},
 		// POST
 		{
-			name:         "невалидный URL (любой, отличный от корня)",
-			method:       http.MethodPost,
-			requestURL:   "/badURL",
-			expectedCode: http.StatusBadRequest,
+			name:      "невалидный URL (любой, отличный от корня)",
+			method:    http.MethodPost,
+			reqURL:    "/badURL",
+			erResCode: http.StatusBadRequest,
 		},
 		{
-			name:         "пустое тело запроса недопустимо",
-			method:       http.MethodPost,
-			requestURL:   "/",
-			requestBody:  "",
-			expectedCode: http.StatusBadRequest,
+			name:      "пустое тело запроса недопустимо",
+			method:    http.MethodPost,
+			reqURL:    "/",
+			reqBody:   "",
+			erResCode: http.StatusBadRequest,
 		},
 		{
-			name:                "валидные данные",
-			method:              http.MethodPost,
-			requestURL:          "/",
-			requestBody:         yandexLongURL,
-			expectedBody:        cfg.TargetBaseURL,
-			expectedHeader:      "Content-Type",
-			expectedHeaderValue: "text/plain",
-			expectedCode:        http.StatusCreated,
+			name:             "валидные данные (запрос text/plain)",
+			method:           http.MethodPost,
+			reqURL:           "/",
+			reqBody:          yandexLongURL,
+			erResBody:        cfg.TargetBaseURL,
+			erResHeader:      handler.ContentType,
+			erResHeaderValue: handler.TextPlain,
+			erResCode:        http.StatusCreated,
 		},
 		// DELETE
 		{
-			name:         "невалидный метод",
-			method:       http.MethodDelete,
-			requestURL:   "/WasD0123",
-			expectedCode: http.StatusBadRequest,
+			name:      "невалидный метод",
+			method:    http.MethodDelete,
+			reqURL:    "/WasD0123",
+			erResCode: http.StatusBadRequest,
 		},
 	}
 
@@ -167,8 +171,8 @@ func (s *RouterTestSuite) TestWebhook() {
 			// Настройка тестового запроса
 			req := cli.R()
 			req.Method = tc.method
-			req.URL = ts.URL + tc.requestURL
-			req.Body = io.NopCloser(strings.NewReader(tc.requestBody))
+			req.URL = ts.URL + tc.reqURL
+			req.Body = io.NopCloser(strings.NewReader(tc.reqBody))
 
 			resp, err := req.Send()
 
@@ -179,19 +183,19 @@ func (s *RouterTestSuite) TestWebhook() {
 				"ошибка при создании HTTP-запроса к серверу: %s", err,
 			)
 
-			assert.Equal(t, tc.expectedCode, resp.StatusCode(), "Код ответа не совпадает с ожидаемым")
+			assert.Equal(t, tc.erResCode, resp.StatusCode(), "Код ответа не совпадает с ожидаемым")
 
-			if h := tc.expectedHeader; h != "" {
-				ehv := tc.expectedHeaderValue
+			if h := tc.erResHeader; h != "" {
+				ehv := tc.erResHeaderValue
 				if ahv := resp.Header().Get(h); ehv != ahv {
 					t.Errorf("Заголовок %s: ожидаемое значение %q, фактическое значение %q", h, ehv, ahv)
 				}
 			}
 
-			if tc.expectedBody != "" {
+			if tc.erResBody != "" {
 				getBody := resp.Body
 				require.NotNil(t, getBody)
-				condition := strings.HasPrefix(string(getBody()), tc.expectedBody)
+				condition := strings.HasPrefix(string(getBody()), tc.erResBody)
 				assert.True(t, condition, "Тело ответа не совпадает с ожидаемым")
 			}
 		})
@@ -200,4 +204,147 @@ func (s *RouterTestSuite) TestWebhook() {
 
 func isErrAutoRedirectDisabled(err error) bool {
 	return strings.HasSuffix(err.Error(), resty.ErrAutoRedirectDisabled.Error())
+}
+
+func (s *RouterTestSuite) TestWebhook_shortenLongURLForJson() {
+	cfg := MakeTestApplicationConfig()
+	cfg.ServiceConfig.Storage = s.storage
+	svc, err := service.NewShortener(cfg.ServiceConfig)
+	if err != nil {
+		s.T().Fatalf("Ошибка создания тестового сервиса: %v", err)
+	}
+	rt := handler.NewRouter(svc, cfg.TargetBaseURL)
+	ts := httptest.NewServer(rt)
+	defer ts.Close()
+
+	s.T().Run("валидные данные (запрос application/json)", func(t *testing.T) {
+		body, err := json.Marshal(model.PostApiShortenReq{URL: yandexLongURL})
+		require.NoError(t, err)
+		resp := s.postApiShorten(t, ts.URL, handler.AppJson, body)
+		assert.Equal(t, http.StatusCreated, resp.StatusCode())
+		assert.Equal(t, handler.AppJson, resp.Header().Get(handler.ContentType))
+		require.NotNil(t, resp.Body)
+		rb := io.NopCloser(bytes.NewReader(resp.Body()))
+		var rbJson model.PostApiShortenRes
+		err = json.NewDecoder(rb).Decode(&rbJson)
+		require.NoError(t, err)
+		condition := strings.HasPrefix(rbJson.Result, cfg.TargetBaseURL)
+		assert.True(t, condition, "Тело ответа не совпадает с ожидаемым")
+	})
+
+	s.T().Run("неверный Content Type", func(t *testing.T) {
+		body, err := json.Marshal(model.PostApiShortenReq{URL: yandexLongURL})
+		require.NoError(t, err)
+		resp := s.postApiShorten(t, ts.URL, handler.TextPlain, body)
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode())
+	})
+
+	s.T().Run("невалидный json в теле запроса", func(t *testing.T) {
+		resp := s.postApiShorten(t, ts.URL, handler.AppJson, []byte("{"))
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode())
+	})
+
+	s.T().Run("нет поля url в теле запроса", func(t *testing.T) {
+		resp := s.postApiShorten(t, ts.URL, handler.AppJson, []byte("{}"))
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode())
+	})
+
+	s.T().Run("в теле запроса в поле url записан не URL", func(t *testing.T) {
+		body, err := json.Marshal(model.PostApiShortenReq{URL: "not-a-url"})
+		require.NoError(t, err)
+		resp := s.postApiShorten(t, ts.URL, handler.AppJson, body)
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode())
+	})
+}
+
+func (s *RouterTestSuite) postApiShorten(t *testing.T, baseURL string, contentType string, body []byte) *resty.Response {
+	req := resty.New().SetRedirectPolicy(resty.NoRedirectPolicy()).R()
+	req.Method = http.MethodPost
+	req.Header.Set(handler.ContentType, contentType)
+	req.URL = baseURL + "/api/shorten"
+	req.Body = io.NopCloser(bytes.NewReader(body))
+
+	resp, err := req.Send()
+	require.Conditionf(t,
+		func() bool { return err == nil || isErrAutoRedirectDisabled(err) },
+		"ошибка при создании HTTP-запроса к серверу: %s", err,
+	)
+
+	return resp
+}
+
+// Используем мок сервиса для тестирования gzip-компрессии
+type mockShortener struct {
+	mock.Mock
+}
+
+func (m *mockShortener) GenerateAndStore(longURL string) (string, error) {
+	args := m.Called(longURL)
+	return args.String(0), args.Error(1)
+}
+
+func (m *mockShortener) Resolve(token string) (string, bool) {
+	return "unused", false
+}
+
+func (s *RouterTestSuite) TestGzipCompression() {
+	svc := new(mockShortener)
+	svc.On("GenerateAndStore", yandexLongURL).Return(yandexToken, nil)
+
+	tbu := MakeTestApplicationConfig().TargetBaseURL
+	rt := handler.NewRouter(svc, tbu)
+
+	ts := httptest.NewServer(handler.GzipMiddleware(rt))
+	defer ts.Close()
+
+	requestBody := fmt.Sprintf(`{"url": "%s"}`, yandexLongURL)
+	successBody := fmt.Sprintf(`{"result": "%s/%s"}`, tbu, yandexToken)
+
+	s.T().Run("sends_gzip", func(t *testing.T) {
+		buf := bytes.NewBuffer(nil)
+		zb := gzip.NewWriter(buf)
+		_, err := zb.Write([]byte(requestBody))
+		require.NoError(t, err)
+		err = zb.Close()
+		require.NoError(t, err)
+
+		r := httptest.NewRequest("POST", ts.URL+"/api/shorten", buf)
+		r.RequestURI = ""
+		r.Header.Set(handler.ContentType, handler.AppJson)
+		r.Header.Set("Content-Encoding", "gzip")
+		r.Header.Set("Accept-Encoding", "")
+
+		resp, err := http.DefaultClient.Do(r)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+		defer resp.Body.Close()
+
+		bd, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.JSONEq(t, successBody, string(bd))
+		svc.AssertExpectations(t)
+	})
+
+	s.T().Run("accepts_gzip", func(t *testing.T) {
+		buf := bytes.NewBufferString(requestBody)
+		r := httptest.NewRequest("POST", ts.URL+"/api/shorten", buf)
+		r.RequestURI = ""
+		r.Header.Set(handler.ContentType, handler.AppJson)
+		r.Header.Set("Accept-Encoding", "gzip")
+
+		resp, err := http.DefaultClient.Do(r)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+		defer resp.Body.Close()
+
+		zr, err := gzip.NewReader(resp.Body)
+		require.NoError(t, err)
+
+		bd, err := io.ReadAll(zr)
+		require.NoError(t, err)
+		require.JSONEq(t, successBody, string(bd))
+		svc.AssertExpectations(t)
+	})
 }
