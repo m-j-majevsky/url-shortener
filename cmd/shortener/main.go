@@ -59,7 +59,7 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Запускаем фоном обработчик сигналов SIGINT/SIGTERM
-	go handleShutdownSignals(cfg, cancel, storage, server, sigChan)
+	go handleShutdownSignals(cfg, cancel, server, sigChan)
 
 	// Запускаем фоном таймер автосохранения
 	go saveStateOnTicker(ctx, storage, cfg.FileStoragePath, cfg.SaveStateInterval)
@@ -96,7 +96,6 @@ func LoadStorage(storagePath string) (*repository.Storage, error) {
 func handleShutdownSignals(
 	cfg config.ApplicationConfig,
 	cancel context.CancelFunc,
-	storage *repository.Storage,
 	server *http.Server,
 	sigChan <-chan os.Signal,
 ) {
