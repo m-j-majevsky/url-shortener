@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -16,7 +17,8 @@ type URLStorage interface {
 }
 
 type ShortenerConfig struct {
-	Storage URLStorage
+	Storage    URLStorage
+	PgxStorage *repository.PgxStorage
 
 	RandProv crypto.RandomByteProvider // источник случайных данных для генератора токенов
 
@@ -119,4 +121,8 @@ func (s *Shortener) GenerateAndStore(longURL string) (string, error) {
 func (s *Shortener) Resolve(token string) (string, bool) {
 	url, ok := s.config.Storage.Resolve(token)
 	return url.String(), ok
+}
+
+func (s *Shortener) PingContext(ctx context.Context) error {
+	return s.config.PgxStorage.PingContext(ctx)
 }
