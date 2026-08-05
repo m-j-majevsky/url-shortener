@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	valid "github.com/asaskevich/govalidator/v12"
 	"github.com/go-chi/chi/v5"
@@ -24,6 +26,7 @@ const (
 type URLShortener interface {
 	GenerateAndStore(longURL string) (string, error)
 	Resolve(token string) (string, bool)
+	PingContext(ctx context.Context) error
 }
 
 type Router struct {
@@ -61,6 +64,8 @@ func NewRouter(svc URLShortener, targetBaseURL string) Router {
 
 	cr.Get("/{token}", mux.resolveShortURL)
 
+	cr.Get("/ping", mux.pingDatabase)
+
 	cr.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "недопустимый путь в URL", http.StatusBadRequest)
 	})
@@ -70,6 +75,21 @@ func NewRouter(svc URLShortener, targetBaseURL string) Router {
 	})
 
 	return mux
+}
+
+func (rt *Router) pingDatabase(w http.ResponseWriter, r *http.Request) {
+	// Дедлайн на проверку БД - чтобы не висело вечно
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	err := rt.service.PingContext(ctx)
+	if err != nil {
+		logger.Log.Error("database ping failed", zap.Error(err))
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 func (rt *Router) resolveShortURL(w http.ResponseWriter, r *http.Request) {

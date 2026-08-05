@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/m-j-majevsky/url-shortener/internal/config"
 	"github.com/m-j-majevsky/url-shortener/internal/handler"
 	"github.com/m-j-majevsky/url-shortener/internal/logger"
@@ -30,11 +32,18 @@ func main() {
 	}
 	defer logger.Log.Sync()
 
+	pool, err := pgxpool.New(context.Background(), cfg.DatabaseDSN)
+	if err != nil {
+		logger.Log.Fatal(err.Error(), zap.String("event", "creating database connection pool"))
+	}
+	defer pool.Close()
+
 	storage, err := LoadStorage(cfg.FileStoragePath)
 	if err != nil {
 		logger.Log.Fatal(err.Error(), zap.String("event", "preparing storage"))
 	}
 	cfg.ServiceConfig.Storage = storage
+	cfg.ServiceConfig.PgxStorage = repository.NewPgxStorage(pool)
 
 	handler, err := makeServiceAndRouter(cfg)
 	if err != nil {

@@ -3,6 +3,7 @@ package handler_test
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -285,6 +286,10 @@ func (m *mockShortener) GenerateAndStore(longURL string) (string, error) {
 
 func (m *mockShortener) Resolve(token string) (string, bool) {
 	return "unused", false
+}
+
+func (m *mockShortener) PingContext(ctx context.Context) error {
+	return nil
 }
 
 func (s *RouterTestSuite) TestGzipCompression() {
