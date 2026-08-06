@@ -3,8 +3,8 @@ package handler_test
 import (
 	"bytes"
 	"compress/gzip"
-	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +16,7 @@ import (
 
 	"github.com/m-j-majevsky/url-shortener/internal/config"
 	"github.com/m-j-majevsky/url-shortener/internal/handler"
+	"github.com/m-j-majevsky/url-shortener/internal/mocks"
 	"github.com/m-j-majevsky/url-shortener/internal/model"
 	"github.com/m-j-majevsky/url-shortener/internal/repository"
 	"github.com/m-j-majevsky/url-shortener/internal/service"
@@ -28,7 +29,7 @@ import (
 
 type RouterTestSuite struct {
 	suite.Suite
-	storage service.URLStorage
+	localStorage service.URLStorage
 }
 
 func TestRouterTestSuite(t *testing.T) {
@@ -41,16 +42,16 @@ var (
 )
 
 func (s *RouterTestSuite) SetupTest() {
-	s.storage = repository.NewStorage()
-	if s.storage == nil {
-		s.T().Fatal("Ошибка создания хранилища")
+	s.localStorage = repository.NewLocalStorage()
+	if s.localStorage == nil {
+		s.T().Fatal("Ошибка создания локального хранилища")
 	}
 
-	if err := s.storage.Store(yandexToken, model.NewURL(yandexLongURL)); err != nil {
+	if err := s.localStorage.Store(yandexToken, model.NewURL(yandexLongURL)); err != nil {
 		s.T().Fatalf("Ошибка подготовки тестовых данных: %v", err)
 	}
 
-	url, ok := s.storage.Resolve(yandexToken)
+	url, ok := s.localStorage.Resolve(yandexToken)
 	if !ok {
 		s.T().Fatal("Ошибка извлечения тестовых данных из хранилища")
 	}
@@ -72,7 +73,7 @@ func MakeTestApplicationConfig() config.ApplicationConfig {
 
 func (s *RouterTestSuite) TestWebhook() {
 	cfg := MakeTestApplicationConfig()
-	cfg.ServiceConfig.Storage = s.storage
+	cfg.ServiceConfig.LocalStorage = s.localStorage
 	svc, err := service.NewShortener(cfg.ServiceConfig)
 	if err != nil {
 		s.T().Fatalf("Ошибка создания тестового сервиса: %v", err)
@@ -209,7 +210,7 @@ func isErrAutoRedirectDisabled(err error) bool {
 
 func (s *RouterTestSuite) TestWebhook_shortenLongURLForJson() {
 	cfg := MakeTestApplicationConfig()
-	cfg.ServiceConfig.Storage = s.storage
+	cfg.ServiceConfig.LocalStorage = s.localStorage
 	svc, err := service.NewShortener(cfg.ServiceConfig)
 	if err != nil {
 		s.T().Fatalf("Ошибка создания тестового сервиса: %v", err)
@@ -274,26 +275,8 @@ func (s *RouterTestSuite) postApiShorten(t *testing.T, baseURL string, contentTy
 	return resp
 }
 
-// Используем мок сервиса для тестирования gzip-компрессии
-type mockShortener struct {
-	mock.Mock
-}
-
-func (m *mockShortener) GenerateAndStore(longURL string) (string, error) {
-	args := m.Called(longURL)
-	return args.String(0), args.Error(1)
-}
-
-func (m *mockShortener) Resolve(token string) (string, bool) {
-	return "unused", false
-}
-
-func (m *mockShortener) PingContext(ctx context.Context) error {
-	return nil
-}
-
 func (s *RouterTestSuite) TestGzipCompression() {
-	svc := new(mockShortener)
+	svc := new(mocks.MockShortener)
 	svc.On("GenerateAndStore", yandexLongURL).Return(yandexToken, nil)
 
 	tbu := MakeTestApplicationConfig().TargetBaseURL
@@ -351,5 +334,48 @@ func (s *RouterTestSuite) TestGzipCompression() {
 		require.NoError(t, err)
 		require.JSONEq(t, successBody, string(bd))
 		svc.AssertExpectations(t)
+	})
+}
+
+func (s *RouterTestSuite) TestWebhook_Get_Ping() {
+	cfg := MakeTestApplicationConfig()
+	cfg.ServiceConfig.LocalStorage = s.localStorage
+
+	mockPgs := new(mocks.MockPgStorage)
+	cfg.ServiceConfig.RemoteStorage = mockPgs
+
+	svc, err := service.NewShortener(cfg.ServiceConfig)
+	if err != nil {
+		s.T().Fatalf("Ошибка создания тестового сервиса: %v", err)
+	}
+
+	rt := handler.NewRouter(svc, cfg.TargetBaseURL)
+	ts := httptest.NewServer(rt)
+	defer ts.Close()
+
+	s.T().Run("успешный ping БД", func(t *testing.T) {
+		mockPgs.On("PingContext", mock.Anything).Return(nil).Once()
+
+		req := resty.New().R()
+		req.Method = http.MethodGet
+		req.URL = ts.URL + "/ping"
+
+		resp, err := req.Send()
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp.StatusCode())
+		mockPgs.AssertExpectations(t)
+	})
+
+	s.T().Run("ошибка ping БД", func(t *testing.T) {
+		mockPgs.On("PingContext", mock.Anything).Return(errors.New("connection timeout")).Once()
+
+		req := resty.New().R()
+		req.Method = http.MethodGet
+		req.URL = ts.URL + "/ping"
+
+		resp, err := req.Send()
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode())
+		mockPgs.AssertExpectations(t)
 	})
 }

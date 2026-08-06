@@ -78,7 +78,6 @@ func NewRouter(svc URLShortener, targetBaseURL string) Router {
 }
 
 func (rt *Router) pingDatabase(w http.ResponseWriter, r *http.Request) {
-	// Дедлайн на проверку БД - чтобы не висело вечно
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 

@@ -6,16 +6,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type PgxStorage struct {
+type PgStorage struct {
 	pool *pgxpool.Pool
 }
 
-func NewPgxStorage(pool *pgxpool.Pool) *PgxStorage {
-	return &PgxStorage{
+func NewPgStorage(pool *pgxpool.Pool) *PgStorage {
+	return &PgStorage{
 		pool: pool,
 	}
 }
 
-func (s *PgxStorage) PingContext(ctx context.Context) error {
+func (s *PgStorage) PingContext(ctx context.Context) error {
 	return s.pool.Ping(ctx)
 }

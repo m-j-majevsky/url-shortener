@@ -16,14 +16,14 @@ func NewTokenToURL() TokenToURL {
 	return make(map[string]model.URL)
 }
 
-type Storage struct {
+type LocalStorage struct {
 	mu sync.Mutex
 
 	data TokenToURL
 }
 
-func NewStorage() *Storage {
-	return &Storage{
+func NewLocalStorage() *LocalStorage {
+	return &LocalStorage{
 		data: NewTokenToURL(),
 	}
 }
@@ -38,7 +38,7 @@ type (
 	storageRepr []itemRepr
 )
 
-func (s *Storage) exportStorageRepr() storageRepr {
+func (s *LocalStorage) exportRepr() storageRepr {
 	result := make(storageRepr, len(s.data))
 	var idx int = 1
 	for su, ou := range s.data {
@@ -49,12 +49,12 @@ func (s *Storage) exportStorageRepr() storageRepr {
 }
 
 // Сохраняет текущее состояние Storage в JSON-файл.
-func (s *Storage) SaveToFile(path string) error {
+func (s *LocalStorage) SaveToFile(path string) error {
 	// Блокировка нужна, чтобы не читать частично изменённые данные из data.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	repr := s.exportStorageRepr()
+	repr := s.exportRepr()
 
 	data, err := json.Marshal(repr)
 	if err != nil {
@@ -67,7 +67,7 @@ func (s *Storage) SaveToFile(path string) error {
 	return nil
 }
 
-func (s *Storage) importStorageRepr(repr storageRepr) {
+func (s *LocalStorage) importRepr(repr storageRepr) {
 	s.data = make(TokenToURL, len(repr))
 	for _, item := range repr {
 		s.data[item.ShortURL] = item.OriginalURL
@@ -76,7 +76,7 @@ func (s *Storage) importStorageRepr(repr storageRepr) {
 
 // Загружает данные из JSON-файла и заменяет ими текущее содержимое data.
 // Важно: эта функция перезаписывает мапу, а не мёржит её.
-func (s *Storage) LoadFromFile(path string) error {
+func (s *LocalStorage) LoadFromFile(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("ошибка чтения файла состояния хранилища: %w", err)
@@ -89,7 +89,7 @@ func (s *Storage) LoadFromFile(path string) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.importStorageRepr(loadedRepr)
+	s.importRepr(loadedRepr)
 	return nil
 }
 
@@ -109,7 +109,7 @@ func (e *ErrTokenTaken) Error() string {
 }
 
 // Сохраняет longURL под токеном. Возвращает ErrTokenTaken, если токен занят.
-func (s *Storage) Store(token string, longURL model.URL) error {
+func (s *LocalStorage) Store(token string, longURL model.URL) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -120,7 +120,7 @@ func (s *Storage) Store(token string, longURL model.URL) error {
 	return nil
 }
 
-func (s *Storage) Resolve(token string) (model.URL, bool) {
+func (s *LocalStorage) Resolve(token string) (model.URL, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
