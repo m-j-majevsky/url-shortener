@@ -156,7 +156,7 @@ func (s *ShortenerSuite) TestGenerateAndStore_Success() {
 	s.NoError(encoding.IsValidBase62(url))
 }
 
-func (s *ShortenerSuite) TestPingContext_Success() {
+func (s *ShortenerSuite) TestPingContext() {
 	rst := new(mocks.MockPgStorage)
 
 	cfg := createShortenerTestConfig(s.localStorage, rst)
@@ -167,30 +167,19 @@ func (s *ShortenerSuite) TestPingContext_Success() {
 	s.svc = svc
 
 	ctx := context.Background()
-	rst.On("PingContext", ctx).Return(nil).Once()
 
-	s.NoError(svc.PingContext(ctx))
+	s.T().Run("успешный ping", func(t *testing.T) {
+		rst.On("PingContext", ctx).Return(nil).Once()
+		s.NoError(svc.PingContext(ctx))
+		rst.AssertExpectations(s.T())
+	})
 
-	rst.AssertExpectations(s.T())
-}
-
-func (s *ShortenerSuite) TestPingContext_Ping_Failed() {
-	rst := new(mocks.MockPgStorage)
-
-	cfg := createShortenerTestConfig(s.localStorage, rst)
-
-	svc, err := NewShortener(cfg)
-	s.Require().NoError(err)
-	s.Require().NotNil(svc)
-	s.svc = svc
-
-	ctx := context.Background()
-	pfErr := fmt.Errorf("connection timeout")
-	rst.On("PingContext", ctx).Return(pfErr).Once()
-
-	s.ErrorIs(svc.PingContext(ctx), pfErr)
-
-	rst.AssertExpectations(s.T())
+	s.T().Run("ошибка при ping'е", func(t *testing.T) {
+		pfErr := fmt.Errorf("connection timeout")
+		rst.On("PingContext", ctx).Return(pfErr).Once()
+		s.ErrorIs(svc.PingContext(ctx), pfErr)
+		rst.AssertExpectations(s.T())
+	})
 }
 
 func TestShortenerSuite(t *testing.T) {
