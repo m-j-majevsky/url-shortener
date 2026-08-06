@@ -10,7 +10,7 @@ import (
 
 type MapBasedDBTestSuite struct {
 	suite.Suite
-	storage *Storage
+	storage *LocalStorage
 }
 
 var (
@@ -26,7 +26,7 @@ var (
 )
 
 func (s *MapBasedDBTestSuite) SetupTest() {
-	s.storage = NewStorage()
+	s.storage = NewLocalStorage()
 	if err := s.storage.Store(yandexToken, yandexURL); err != nil {
 		s.T().Fatalf("Ошибка подготовки тестовых данных: %s", err.Error())
 	}

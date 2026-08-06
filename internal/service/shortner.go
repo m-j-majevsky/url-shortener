@@ -16,9 +16,13 @@ type URLStorage interface {
 	Resolve(token string) (model.URL, bool)
 }
 
+type RemoteStorage interface {
+	PingContext(ctx context.Context) error
+}
+
 type ShortenerConfig struct {
-	Storage    URLStorage
-	PgxStorage *repository.PgxStorage
+	LocalStorage  URLStorage
+	RemoteStorage RemoteStorage
 
 	RandProv crypto.RandomByteProvider // источник случайных данных для генератора токенов
 
@@ -49,8 +53,8 @@ type Shortener struct {
 const errCfgHeader = "ошибка конфигурации сервиса"
 
 func NewShortener(cfg ShortenerConfig) (*Shortener, error) {
-	if cfg.Storage == nil {
-		return nil, fmt.Errorf("%s: не задано хранилище", errCfgHeader)
+	if cfg.LocalStorage == nil {
+		return nil, fmt.Errorf("%s: не задано локальное хранилище", errCfgHeader)
 	}
 	if cfg.RandProv == nil {
 		return nil, fmt.Errorf("%s: не задан генератор случайных данных", errCfgHeader)
@@ -103,7 +107,7 @@ func (s *Shortener) GenerateAndStore(longURL string) (string, error) {
 			return "", err
 		}
 
-		err = s.config.Storage.Store(token, model.NewURL(longURL))
+		err = s.config.LocalStorage.Store(token, model.NewURL(longURL))
 		if err == nil {
 			// Успех
 			return token, nil
@@ -119,10 +123,10 @@ func (s *Shortener) GenerateAndStore(longURL string) (string, error) {
 }
 
 func (s *Shortener) Resolve(token string) (string, bool) {
-	url, ok := s.config.Storage.Resolve(token)
+	url, ok := s.config.LocalStorage.Resolve(token)
 	return url.String(), ok
 }
 
 func (s *Shortener) PingContext(ctx context.Context) error {
-	return s.config.PgxStorage.PingContext(ctx)
+	return s.config.RemoteStorage.PingContext(ctx)
 }
