@@ -35,11 +35,20 @@ func main() {
 	var saveStateMode bool
 
 	if len(cfg.DatabaseDSN) > 0 {
+		// Конфиг пока передаю через DSN-строку при запуске.
+		// Профиль нагрузки ешё не выяснен, и в примере ниже значения параметров не продуманы
+		// ./srv.o -l debug -d \
+		//   "postgres://url_shortener:SECRET@localhost:30432/url_shortener?sslmode=disable&pool_max_conns=10&pool_max_conn_lifetime=30m&pool_min_conns=2&pool_max_conn_idle_time=5m"
+
 		pool, err := pgxpool.New(context.Background(), cfg.DatabaseDSN)
 		if err != nil {
 			logger.Log.Fatal(err.Error(), zap.String("event", "creating database connection pool"))
 		}
 		defer pool.Close()
+
+		if err = pool.Ping(context.Background()); err != nil {
+			logger.Log.Fatal(err.Error(), zap.String("event", "check database availabity"))
+		}
 
 		cfg.ServiceConfig.Storage = repository.NewPgStorage(pool)
 		logger.Log.Info("Remote storage mode is on", zap.String("event", "preparing storage"))
