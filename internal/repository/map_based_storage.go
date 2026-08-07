@@ -28,16 +28,6 @@ func NewLocalStorage() *LocalStorage {
 	}
 }
 
-type (
-	itemRepr struct {
-		UUID        string    `json:"uuid"`
-		ShortURL    string    `json:"short_url"`
-		OriginalURL model.URL `json:"original_url"`
-	}
-
-	storageRepr []itemRepr
-)
-
 func (s *LocalStorage) exportRepr() storageRepr {
 	result := make(storageRepr, len(s.data))
 	var idx int = 1
@@ -91,21 +81,6 @@ func (s *LocalStorage) LoadFromFile(path string) error {
 	defer s.mu.Unlock()
 	s.importRepr(loadedRepr)
 	return nil
-}
-
-// Ошибка, когда токен уже занят
-type ErrTokenTaken struct {
-	Token string
-}
-
-func NewErrTokenTaken(tok string) *ErrTokenTaken {
-	return &ErrTokenTaken{
-		Token: tok,
-	}
-}
-
-func (e *ErrTokenTaken) Error() string {
-	return fmt.Sprintf("токен %q занят", e.Token)
 }
 
 // Сохраняет longURL под токеном. Возвращает ErrTokenTaken, если токен занят.

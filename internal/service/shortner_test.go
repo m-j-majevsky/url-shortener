@@ -17,8 +17,8 @@ import (
 
 type ShortenerSuite struct {
 	suite.Suite
-	localStorage URLStorage
-	svc          *Shortener
+	storage BasicStorage
+	svc     *Shortener
 }
 
 var (
@@ -31,21 +31,20 @@ var (
 )
 
 func (s *ShortenerSuite) SetupTest() {
-	s.localStorage = repository.NewLocalStorage()
-	if err := s.localStorage.Store(yandexToken, model.NewURL(yandexURL)); err != nil {
+	s.storage = repository.NewLocalStorage()
+	if err := s.storage.Store(yandexToken, model.NewURL(yandexURL)); err != nil {
 		s.T().Fatalf("Ошибка подготовки тестовых данных: %s", err.Error())
 	}
 }
 
-func createShortenerTestConfig(localStorage URLStorage, remoteStorage RemoteStorage) ShortenerConfig {
+func createShortenerTestConfig(storage BasicStorage) ShortenerConfig {
 	cfg := DefaultShortenerConfig()
-	cfg.LocalStorage = localStorage
-	cfg.RemoteStorage = remoteStorage
+	cfg.Storage = storage
 	return cfg
 }
 
 func (s *ShortenerSuite) createShotnerInstance() {
-	cfg := createShortenerTestConfig(s.localStorage, nil)
+	cfg := createShortenerTestConfig(s.storage)
 	svc, err := NewShortener(cfg)
 	s.Require().NoError(err)
 	s.Require().NotNil(svc)
@@ -57,7 +56,7 @@ func (s *ShortenerSuite) TestNewShortener_ValidConfig_CreatesInstance() {
 }
 
 func (s *ShortenerSuite) TestNewShortener_InvalidConfig_ReturnsError() {
-	badCfg := createShortenerTestConfig(s.localStorage, nil)
+	badCfg := createShortenerTestConfig(s.storage)
 	badCfg.MinTokenLength = 10
 	badCfg.MaxTokenLength = 5
 
@@ -93,7 +92,7 @@ func (r *FixedReader) Read(p []byte) (int, error) {
 }
 
 func (s *ShortenerSuite) TestGenerateToken_RetryOnLengthMismatch_WithFixedProvider() {
-	cfg := createShortenerTestConfig(s.localStorage, nil)
+	cfg := createShortenerTestConfig(s.storage)
 	cfg.MinTokenLength = 8
 	cfg.MaxTokenLength = 10
 	cfg.BytesToGenerate = 6
@@ -122,7 +121,7 @@ func (FailingReader) Read([]byte) (int, error) {
 }
 
 func (s *ShortenerSuite) TestGenerateRandomBytes_ErrorWhenProviderFails() {
-	cfg := createShortenerTestConfig(s.localStorage, nil)
+	cfg := createShortenerTestConfig(s.storage)
 	cfg.RandProv = FailingReader{}
 	svc, err := NewShortener(cfg)
 	s.Require().NoError(err)
@@ -159,7 +158,7 @@ func (s *ShortenerSuite) TestGenerateAndStore_Success() {
 func (s *ShortenerSuite) TestPingContext() {
 	rst := new(mocks.MockPgStorage)
 
-	cfg := createShortenerTestConfig(s.localStorage, rst)
+	cfg := createShortenerTestConfig(rst)
 
 	svc, err := NewShortener(cfg)
 	s.Require().NoError(err)
@@ -170,14 +169,14 @@ func (s *ShortenerSuite) TestPingContext() {
 
 	s.T().Run("успешный ping", func(t *testing.T) {
 		rst.On("PingContext", ctx).Return(nil).Once()
-		s.NoError(svc.PingContext(ctx))
+		s.NoError(svc.PingDB(ctx))
 		rst.AssertExpectations(s.T())
 	})
 
 	s.T().Run("ошибка при ping'е", func(t *testing.T) {
 		pfErr := fmt.Errorf("connection timeout")
 		rst.On("PingContext", ctx).Return(pfErr).Once()
-		s.ErrorIs(svc.PingContext(ctx), pfErr)
+		s.ErrorIs(svc.PingDB(ctx), pfErr)
 		rst.AssertExpectations(s.T())
 	})
 }
