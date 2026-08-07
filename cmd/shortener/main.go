@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -32,18 +31,27 @@ func main() {
 	}
 	defer logger.Log.Sync()
 
-	pool, err := pgxpool.New(context.Background(), cfg.DatabaseDSN)
-	if err != nil {
-		logger.Log.Fatal(err.Error(), zap.String("event", "creating database connection pool"))
-	}
-	defer pool.Close()
+	var localStorage *repository.LocalStorage
+	var saveStateMode bool
 
-	localStorage, err := LoadLocalStorage(cfg.FileStoragePath)
-	if err != nil {
-		logger.Log.Fatal(err.Error(), zap.String("event", "preparing local storage"))
+	if len(cfg.DatabaseDSN) > 0 {
+		pool, err := pgxpool.New(context.Background(), cfg.DatabaseDSN)
+		if err != nil {
+			logger.Log.Fatal(err.Error(), zap.String("event", "creating database connection pool"))
+		}
+		defer pool.Close()
+
+		cfg.ServiceConfig.Storage = repository.NewPgStorage(pool)
+		logger.Log.Info("Remote storage mode is on", zap.String("event", "preparing storage"))
+	} else {
+		localStorage, saveStateMode, err = LoadLocalStorage(cfg.FileStoragePath)
+		if err != nil {
+			logger.Log.Fatal(err.Error(), zap.String("event", "loading storage state from file"))
+		}
+
+		cfg.ServiceConfig.Storage = localStorage
+		logger.Log.Info("Local storage mode is on", zap.String("event", "preparing storage"))
 	}
-	cfg.ServiceConfig.LocalStorage = localStorage
-	cfg.ServiceConfig.RemoteStorage = repository.NewPgStorage(pool)
 
 	handler, err := makeServiceAndRouter(cfg)
 	if err != nil {
@@ -70,11 +78,10 @@ func main() {
 	// Запускаем фоном обработчик сигналов SIGINT/SIGTERM
 	go handleShutdownSignals(cfg, cancel, server, sigChan)
 
-	// Запускаем фоном таймер автосохранения
-	go saveStateOnTicker(ctx, localStorage, cfg.FileStoragePath, cfg.SaveStateInterval)
-
-	// Плюс, регистрируем отложенное гарантированное сохранение при любом исходе
-	defer saveStateDeferred(localStorage, cfg.FileStoragePath)
+	if saveStateMode {
+		// Режим сохранения локального хранилища в файл
+		defer saveStateDeferred(localStorage, cfg.FileStoragePath)
+	}
 
 	// Блокируем main, пока не придёт сигнал
 	<-ctx.Done()
@@ -82,23 +89,23 @@ func main() {
 	logger.Log.Info("Application shutting down gracefully", zap.String("event", "shutdown complete"))
 }
 
-func LoadLocalStorage(storagePath string) (*repository.LocalStorage, error) {
+func LoadLocalStorage(storagePath string) (*repository.LocalStorage, bool, error) {
 	storage := repository.NewLocalStorage()
 
-	event := zap.String("event", "loading state")
+	event := zap.String("event", "loading state from file")
 
 	err := storage.LoadFromFile(storagePath)
 	if err == nil {
 		logger.Log.Info("Local storage read successfully", zap.String("path", storagePath), event)
-		return storage, nil
+		return storage, true, nil
 	}
 
 	if errors.Is(err, os.ErrNotExist) {
 		logger.Log.Info("Local storage file not found, starting with empty storage", zap.String("path", storagePath), event)
-		return storage, nil
+		return storage, false, nil
 	}
 
-	return nil, err
+	return nil, false, err
 }
 
 // Обработка сигналов SIGINT/SIGTERM
@@ -127,29 +134,7 @@ func handleShutdownSignals(
 	cancel()
 }
 
-// Таймер автосохранения (тикает каждые snapshotInterval)
-func saveStateOnTicker(
-	ctx context.Context,
-	storage *repository.LocalStorage,
-	path string,
-	interval time.Duration,
-) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := storage.SaveToFile(path); err != nil {
-				logger.Log.Error("Failed to save local storage snapshot", zap.Error(err), zap.String("path", path), zap.String("event", "saving state on ticker"))
-			}
-		}
-	}
-}
-
-// Для гарантированного сохранения при любом выходе (предполагается defer вызов)
+// Для сохранения состояния локального хранилища в файл по завершении работы сервиса (предполагается defer вызов)
 func saveStateDeferred(storage *repository.LocalStorage, path string) {
 	event := zap.String("event", "deferred state saving")
 	if err := storage.SaveToFile(path); err != nil {

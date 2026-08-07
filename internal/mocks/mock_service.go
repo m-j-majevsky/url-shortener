@@ -20,7 +20,12 @@ func (m *MockShortener) Resolve(token string) (string, bool) {
 	return args.String(0), args.Bool(1)
 }
 
-func (m *MockShortener) PingContext(ctx context.Context) error {
+func (m *MockShortener) PingDB(ctx context.Context) error {
 	args := m.Called(ctx)
 	return args.Error(0)
+}
+
+func (m *MockShortener) WithPingDB() bool {
+	args := m.Called()
+	return args.Bool(0)
 }

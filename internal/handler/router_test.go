@@ -29,7 +29,7 @@ import (
 
 type RouterTestSuite struct {
 	suite.Suite
-	localStorage service.URLStorage
+	storage service.BasicStorage
 }
 
 func TestRouterTestSuite(t *testing.T) {
@@ -42,16 +42,16 @@ var (
 )
 
 func (s *RouterTestSuite) SetupTest() {
-	s.localStorage = repository.NewLocalStorage()
-	if s.localStorage == nil {
+	s.storage = repository.NewLocalStorage()
+	if s.storage == nil {
 		s.T().Fatal("Ошибка создания локального хранилища")
 	}
 
-	if err := s.localStorage.Store(yandexToken, model.NewURL(yandexLongURL)); err != nil {
+	if err := s.storage.Store(yandexToken, model.NewURL(yandexLongURL)); err != nil {
 		s.T().Fatalf("Ошибка подготовки тестовых данных: %v", err)
 	}
 
-	url, ok := s.localStorage.Resolve(yandexToken)
+	url, ok := s.storage.Resolve(yandexToken)
 	if !ok {
 		s.T().Fatal("Ошибка извлечения тестовых данных из хранилища")
 	}
@@ -73,7 +73,7 @@ func MakeTestApplicationConfig() config.ApplicationConfig {
 
 func (s *RouterTestSuite) TestWebhook() {
 	cfg := MakeTestApplicationConfig()
-	cfg.ServiceConfig.LocalStorage = s.localStorage
+	cfg.ServiceConfig.Storage = s.storage
 	svc, err := service.NewShortener(cfg.ServiceConfig)
 	if err != nil {
 		s.T().Fatalf("Ошибка создания тестового сервиса: %v", err)
@@ -210,7 +210,7 @@ func isErrAutoRedirectDisabled(err error) bool {
 
 func (s *RouterTestSuite) TestWebhook_shortenLongURLForJson() {
 	cfg := MakeTestApplicationConfig()
-	cfg.ServiceConfig.LocalStorage = s.localStorage
+	cfg.ServiceConfig.Storage = s.storage
 	svc, err := service.NewShortener(cfg.ServiceConfig)
 	if err != nil {
 		s.T().Fatalf("Ошибка создания тестового сервиса: %v", err)
@@ -277,6 +277,7 @@ func (s *RouterTestSuite) postApiShorten(t *testing.T, baseURL string, contentTy
 
 func (s *RouterTestSuite) TestGzipCompression() {
 	svc := new(mocks.MockShortener)
+	svc.On("WithPingDB").Return(false)
 	svc.On("GenerateAndStore", yandexLongURL).Return(yandexToken, nil)
 
 	tbu := MakeTestApplicationConfig().TargetBaseURL
@@ -338,23 +339,16 @@ func (s *RouterTestSuite) TestGzipCompression() {
 }
 
 func (s *RouterTestSuite) TestWebhook_Get_Ping() {
-	cfg := MakeTestApplicationConfig()
-	cfg.ServiceConfig.LocalStorage = s.localStorage
+	svc := new(mocks.MockShortener)
+	svc.On("WithPingDB").Return(true)
 
-	mockPgs := new(mocks.MockPgStorage)
-	cfg.ServiceConfig.RemoteStorage = mockPgs
+	rt := handler.NewRouter(svc, MakeTestApplicationConfig().TargetBaseURL)
 
-	svc, err := service.NewShortener(cfg.ServiceConfig)
-	if err != nil {
-		s.T().Fatalf("Ошибка создания тестового сервиса: %v", err)
-	}
-
-	rt := handler.NewRouter(svc, cfg.TargetBaseURL)
 	ts := httptest.NewServer(rt)
 	defer ts.Close()
 
 	s.T().Run("успешный ping БД", func(t *testing.T) {
-		mockPgs.On("PingContext", mock.Anything).Return(nil).Once()
+		svc.On("PingDB", mock.Anything).Return(nil).Once()
 
 		req := resty.New().R()
 		req.Method = http.MethodGet
@@ -363,11 +357,11 @@ func (s *RouterTestSuite) TestWebhook_Get_Ping() {
 		resp, err := req.Send()
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, resp.StatusCode())
-		mockPgs.AssertExpectations(t)
+		svc.AssertExpectations(t)
 	})
 
 	s.T().Run("ошибка ping БД", func(t *testing.T) {
-		mockPgs.On("PingContext", mock.Anything).Return(errors.New("connection timeout")).Once()
+		svc.On("PingDB", mock.Anything).Return(errors.New("connection timeout")).Once()
 
 		req := resty.New().R()
 		req.Method = http.MethodGet
@@ -376,6 +370,6 @@ func (s *RouterTestSuite) TestWebhook_Get_Ping() {
 		resp, err := req.Send()
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode())
-		mockPgs.AssertExpectations(t)
+		svc.AssertExpectations(t)
 	})
 }

@@ -21,12 +21,15 @@ const (
 	ContentType = "Content-Type"
 	AppJson     = "application/json"
 	TextPlain   = "text/plain"
+
+	pingPath = "/ping"
 )
 
 type URLShortener interface {
 	GenerateAndStore(longURL string) (string, error)
 	Resolve(token string) (string, bool)
-	PingContext(ctx context.Context) error
+	WithPingDB() bool
+	PingDB(ctx context.Context) error
 }
 
 type Router struct {
@@ -64,11 +67,19 @@ func NewRouter(svc URLShortener, targetBaseURL string) Router {
 
 	cr.Get("/{token}", mux.resolveShortURL)
 
-	cr.Get("/ping", mux.pingDatabase)
-
-	cr.NotFound(func(w http.ResponseWriter, r *http.Request) {
+	wrongPathAndBadRequest := func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "недопустимый путь в URL", http.StatusBadRequest)
-	})
+	}
+
+	if svc.WithPingDB() {
+		logger.Log.Info("service supports request for " + pingPath)
+		cr.Get(pingPath, mux.pingDB)
+	} else {
+		logger.Log.Info("service doesn't support request for " + pingPath)
+		cr.Get(pingPath, wrongPathAndBadRequest)
+	}
+
+	cr.NotFound(wrongPathAndBadRequest)
 
 	cr.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "недопустимый метод", http.StatusBadRequest)
@@ -77,11 +88,17 @@ func NewRouter(svc URLShortener, targetBaseURL string) Router {
 	return mux
 }
 
-func (rt *Router) pingDatabase(w http.ResponseWriter, r *http.Request) {
+func (rt *Router) pingDB(w http.ResponseWriter, r *http.Request) {
+	if !rt.service.WithPingDB() {
+		logger.Log.Error("service doesn't support method PingContext")
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	err := rt.service.PingContext(ctx)
+	err := rt.service.PingDB(ctx)
 	if err != nil {
 		logger.Log.Error("database ping failed", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)

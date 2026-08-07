@@ -11,18 +11,18 @@ import (
 	"github.com/m-j-majevsky/url-shortener/internal/repository"
 )
 
-type URLStorage interface {
+type BasicStorage interface {
 	Store(token string, longURL model.URL) error
 	Resolve(token string) (model.URL, bool)
 }
 
-type RemoteStorage interface {
+type StorageWithDB interface {
+	BasicStorage
 	PingContext(ctx context.Context) error
 }
 
 type ShortenerConfig struct {
-	LocalStorage  URLStorage
-	RemoteStorage RemoteStorage
+	Storage BasicStorage
 
 	RandProv crypto.RandomByteProvider // источник случайных данных для генератора токенов
 
@@ -53,7 +53,7 @@ type Shortener struct {
 const errCfgHeader = "ошибка конфигурации сервиса"
 
 func NewShortener(cfg ShortenerConfig) (*Shortener, error) {
-	if cfg.LocalStorage == nil {
+	if cfg.Storage == nil {
 		return nil, fmt.Errorf("%s: не задано локальное хранилище", errCfgHeader)
 	}
 	if cfg.RandProv == nil {
@@ -107,7 +107,7 @@ func (s *Shortener) GenerateAndStore(longURL string) (string, error) {
 			return "", err
 		}
 
-		err = s.config.LocalStorage.Store(token, model.NewURL(longURL))
+		err = s.config.Storage.Store(token, model.NewURL(longURL))
 		if err == nil {
 			// Успех
 			return token, nil
@@ -123,10 +123,19 @@ func (s *Shortener) GenerateAndStore(longURL string) (string, error) {
 }
 
 func (s *Shortener) Resolve(token string) (string, bool) {
-	url, ok := s.config.LocalStorage.Resolve(token)
+	url, ok := s.config.Storage.Resolve(token)
 	return url.String(), ok
 }
 
-func (s *Shortener) PingContext(ctx context.Context) error {
-	return s.config.RemoteStorage.PingContext(ctx)
+func (s *Shortener) PingDB(ctx context.Context) error {
+	swp, ok := s.config.Storage.(StorageWithDB)
+	if !ok {
+		return fmt.Errorf("хранилище не поддерживает метод PingContext")
+	}
+	return swp.PingContext(ctx)
+}
+
+func (s *Shortener) WithPingDB() bool {
+	_, ok := s.config.Storage.(StorageWithDB)
+	return ok
 }

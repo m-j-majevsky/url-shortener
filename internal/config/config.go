@@ -65,7 +65,7 @@ func parseFlags(cfg *ApplicationConfig) {
 	flag.StringVar(&cfg.TargetBaseURL, "b", "http://localhost:8080", "target URL base path")
 	flag.StringVar(&cfg.LogLevel, "l", "info", "log level")
 	flag.StringVar(&cfg.DatabaseDSN, "d", "", "data source name")
-	flag.StringVar(&cfg.FileStoragePath, "f", "storage_state.json", "path to storage saved state")
+	flag.StringVar(&cfg.FileStoragePath, "f", "", "path to storage saved state")
 	flag.DurationVar(&cfg.SaveStateInterval, "s", time.Second*time.Duration(1), "save state interval")
 	flag.Parse()
 }
