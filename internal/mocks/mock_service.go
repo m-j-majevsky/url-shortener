@@ -10,14 +10,14 @@ type MockShortener struct {
 	mock.Mock
 }
 
-func (m *MockShortener) GenerateAndStore(longURL string) (string, error) {
-	args := m.Called(longURL)
+func (m *MockShortener) GenerateAndStore(ctx context.Context, longURL string) (string, error) {
+	args := m.Called(ctx, longURL)
 	return args.String(0), args.Error(1)
 }
 
-func (m *MockShortener) Resolve(token string) (string, bool) {
-	args := m.Called(token)
-	return args.String(0), args.Bool(1)
+func (m *MockShortener) Resolve(ctx context.Context, token string) (string, error) {
+	args := m.Called(ctx, token)
+	return args.String(0), args.Error(1)
 }
 
 func (m *MockShortener) PingDB(ctx context.Context) error {
@@ -25,7 +25,7 @@ func (m *MockShortener) PingDB(ctx context.Context) error {
 	return args.Error(0)
 }
 
-func (m *MockShortener) WithPingDB() bool {
+func (m *MockShortener) WithDB() bool {
 	args := m.Called()
 	return args.Bool(0)
 }

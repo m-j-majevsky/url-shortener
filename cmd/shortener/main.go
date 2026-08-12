@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/m-j-majevsky/url-shortener/internal/logger"
 	"github.com/m-j-majevsky/url-shortener/internal/repository"
 	"github.com/m-j-majevsky/url-shortener/internal/service"
+	"github.com/m-j-majevsky/url-shortener/migrations"
 
 	"go.uber.org/zap"
 )
@@ -33,27 +35,24 @@ func main() {
 
 	var localStorage *repository.LocalStorage
 	var saveStateMode bool
+	backgroundCtx := context.Background()
 
 	if len(cfg.DatabaseDSN) > 0 {
-		// Конфиг пока передаю через DSN-строку при запуске.
-		// Профиль нагрузки ешё не выяснен, и в примере ниже значения параметров не продуманы
-		// ./srv.o -l debug -d \
-		//   "postgres://url_shortener:SECRET@localhost:30432/url_shortener?sslmode=disable&pool_max_conns=10&pool_max_conn_lifetime=30m&pool_min_conns=2&pool_max_conn_idle_time=5m"
-
-		pool, err := pgxpool.New(context.Background(), cfg.DatabaseDSN)
+		pool, err := createPool(backgroundCtx, cfg.DatabaseDSN)
 		if err != nil {
 			logger.Log.Fatal(err.Error(), zap.String("event", "creating database connection pool"))
 		}
 		defer pool.Close()
 
-		if err = pool.Ping(context.Background()); err != nil {
-			logger.Log.Fatal(err.Error(), zap.String("event", "check database availabity"))
+		// Накатываем миграции
+		if err := migrations.RunMigrations(backgroundCtx, cfg.DatabaseDSN); err != nil {
+			logger.Log.Fatal(err.Error(), zap.String("event", "executing migrations"))
 		}
 
 		cfg.ServiceConfig.Storage = repository.NewPgStorage(pool)
 		logger.Log.Info("Remote storage mode is on", zap.String("event", "preparing storage"))
 	} else {
-		localStorage, saveStateMode, err = LoadLocalStorage(cfg.FileStoragePath)
+		localStorage, saveStateMode, err = loadLocalStorage(cfg.FileStoragePath)
 		if err != nil {
 			logger.Log.Fatal(err.Error(), zap.String("event", "loading storage state from file"))
 		}
@@ -77,7 +76,7 @@ func main() {
 	go listenAndServe(server)
 
 	// Создаём контекст с возможностью отмены для корректного завершения
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(backgroundCtx)
 	defer cancel()
 
 	// Создаем канал для обработки сигналов от ОС
@@ -98,7 +97,33 @@ func main() {
 	logger.Log.Info("Application shutting down gracefully", zap.String("event", "shutdown complete"))
 }
 
-func LoadLocalStorage(storagePath string) (*repository.LocalStorage, bool, error) {
+// Создаёт настроенный пул соединений и проверяет подключение.
+//
+// Реализация навеяна подходом Bazys'а:
+// https://github.com/Bazys/practicum-webinars/blob/master/videos/main.go: func newPool
+//
+// Отличие в том, что конфиг я передаю через DSN-строку при запуске.
+// Профиль нагрузки ешё не выяснен, и в примере ниже значения параметров произвольные
+//
+//	./srv.o -l debug \
+//	  -d "postgres://url_shortener:SECRET@localhost:30432/url_shortener?sslmode=disable&pool_max_conns=10&pool_max_conn_lifetime=30m&pool_min_conns=2&pool_max_conn_idle_time=5m"
+func createPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return nil, err
+	}
+
+	// Пингуем с таймаутом, чтобы сразу падать, если БД недоступна.
+	pingCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if err := pool.Ping(pingCtx); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	return pool, nil
+}
+
+func loadLocalStorage(storagePath string) (*repository.LocalStorage, bool, error) {
 	storage := repository.NewLocalStorage()
 
 	event := zap.String("event", "loading state from file")

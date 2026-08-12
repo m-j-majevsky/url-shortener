@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	enc "github.com/m-j-majevsky/url-shortener/internal/encoding"
 	"github.com/m-j-majevsky/url-shortener/internal/logger"
 	"github.com/m-j-majevsky/url-shortener/internal/model"
+	"github.com/m-j-majevsky/url-shortener/internal/repository"
 )
 
 const (
@@ -26,29 +28,43 @@ const (
 )
 
 type URLShortener interface {
-	GenerateAndStore(longURL string) (string, error)
-	Resolve(token string) (string, bool)
-	WithPingDB() bool
+	GenerateAndStore(ctx context.Context, longURL string) (string, error)
+	Resolve(ctx context.Context, token string) (string, error)
+	WithDB() bool
 	PingDB(ctx context.Context) error
 }
 
 type Router struct {
-	mux     *chi.Mux
-	service URLShortener
-	baseURL string
+	mux               *chi.Mux
+	service           URLShortener
+	withRemoteStorage bool
+	baseURL           string
 }
 
 func (rt Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rt.mux.ServeHTTP(w, r)
 }
 
+var (
+	badRequest = func(message string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, message, http.StatusBadRequest)
+		}
+	}
+
+	badRequestWithWrongPath = badRequest("недопустимый путь в URL")
+
+	badRequestWithMethodNotAllowed = badRequest("недопустимый метод")
+)
+
 func NewRouter(svc URLShortener, targetBaseURL string) Router {
 	cr := chi.NewRouter()
 
 	mux := Router{
-		mux:     cr,
-		service: svc,
-		baseURL: targetBaseURL,
+		mux:               cr,
+		service:           svc,
+		withRemoteStorage: svc.WithDB(),
+		baseURL:           targetBaseURL,
 	}
 
 	cr.Group(func(cr chi.Router) {
@@ -67,30 +83,24 @@ func NewRouter(svc URLShortener, targetBaseURL string) Router {
 
 	cr.Get("/{token}", mux.resolveShortURL)
 
-	wrongPathAndBadRequest := func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "недопустимый путь в URL", http.StatusBadRequest)
-	}
-
-	if svc.WithPingDB() {
+	if mux.withRemoteStorage {
 		logger.Log.Info("service supports request for " + pingPath)
 		cr.Get(pingPath, mux.pingDB)
 	} else {
 		logger.Log.Info("service doesn't support request for " + pingPath)
-		cr.Get(pingPath, wrongPathAndBadRequest)
+		cr.Get(pingPath, badRequestWithWrongPath)
 	}
 
-	cr.NotFound(wrongPathAndBadRequest)
+	cr.NotFound(badRequestWithWrongPath)
 
-	cr.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "недопустимый метод", http.StatusBadRequest)
-	})
+	cr.MethodNotAllowed(badRequestWithMethodNotAllowed)
 
 	return mux
 }
 
 func (rt *Router) pingDB(w http.ResponseWriter, r *http.Request) {
-	if !rt.service.WithPingDB() {
-		logger.Log.Error("service doesn't support method PingContext")
+	if !rt.withRemoteStorage {
+		logger.Log.Error("service doesn't support method PingDB")
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -116,14 +126,25 @@ func (rt *Router) resolveShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	url, found := rt.service.Resolve(token)
-	if !found {
-		logger.Log.Debug("cannot find token " + url)
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	url, err := rt.service.Resolve(ctx, token)
+
+	if err == nil {
+		http.Redirect(w, r, url, http.StatusTemporaryRedirect)
+		return
+	}
+
+	var etnf *repository.ErrTokenNotFound
+	if errors.As(err, &etnf) {
+		logger.Log.Debug(fmt.Sprintf("token %s not found", token), zap.Error(etnf))
 		http.Error(w, "URL не зарегистрирован", http.StatusBadRequest)
 		return
 	}
 
-	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
+	logger.Log.Debug("error resolving token "+token, zap.Error(err))
+	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 }
 
 func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) {
@@ -141,7 +162,10 @@ func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	token, shortenerErr := rt.service.GenerateAndStore(string(bodyBytes))
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	token, shortenerErr := rt.service.GenerateAndStore(ctx, string(bodyBytes))
 	if shortenerErr != nil {
 		logger.Log.Debug("error providing short URL", zap.Error(shortenerErr))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -171,7 +195,10 @@ func (rt *Router) shortenLongURLForJson(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	token, shortenerErr := rt.service.GenerateAndStore(req.URL)
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	token, shortenerErr := rt.service.GenerateAndStore(ctx, req.URL)
 	if shortenerErr != nil {
 		logger.Log.Debug("error providing short URL", zap.Error(shortenerErr))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)

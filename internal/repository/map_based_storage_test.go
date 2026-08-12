@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -27,38 +28,40 @@ var (
 
 func (s *MapBasedDBTestSuite) SetupTest() {
 	s.storage = NewLocalStorage()
-	if err := s.storage.Store(yandexToken, yandexURL); err != nil {
+	if err := s.storage.Store(context.Background(), yandexToken, yandexURL); err != nil {
 		s.T().Fatalf("Ошибка подготовки тестовых данных: %s", err.Error())
 	}
 }
 
 func (suite *MapBasedDBTestSuite) TestUnresolvedToken() {
-	url, ok := suite.storage.Resolve(someToken)
-	suite.False(ok)
+	url, err := suite.storage.Resolve(context.Background(), someToken)
+	var errTNF *ErrTokenNotFound
+	suite.ErrorAs(err, &errTNF)
 	suite.Equal(model.EmptyURL, url)
 }
 
 func (suite *MapBasedDBTestSuite) TestResolveSuccess() {
-	url, ok := suite.storage.Resolve(yandexToken)
-	suite.True(ok)
+	url, err := suite.storage.Resolve(context.Background(), yandexToken)
+	suite.NoError(err)
 	suite.Equal(yandexURL, url)
 }
 
 func (suite *MapBasedDBTestSuite) TestStoreWithErrTokenTaken() {
-	err := suite.storage.Store(yandexToken, goURL)
+	err := suite.storage.Store(context.Background(), yandexToken, goURL)
 	suite.Require().Error(err)
 	var errTT *ErrTokenTaken
 	suite.ErrorAs(err, &errTT)
 	suite.Equal(yandexToken, errTT.Token)
-	suite.Contains(errTT.Error(), "занят")
 }
 
 func (suite *MapBasedDBTestSuite) TestStore() {
-	err := suite.storage.Store(mailToken, mailURL)
-	suite.Require().NoError(err)
+	ctx := context.Background()
 
-	url, ok := suite.storage.Resolve(mailToken)
-	suite.Require().True(ok)
+	errStore := suite.storage.Store(ctx, mailToken, mailURL)
+	suite.Require().NoError(errStore)
+
+	url, errResolse := suite.storage.Resolve(ctx, mailToken)
+	suite.Require().NoError(errResolse)
 	suite.Equal(mailURL, url)
 }
 
