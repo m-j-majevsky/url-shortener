@@ -3,6 +3,7 @@ package handler_test
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,13 +48,15 @@ func (s *RouterTestSuite) SetupTest() {
 		s.T().Fatal("Ошибка создания локального хранилища")
 	}
 
-	if err := s.storage.Store(yandexToken, model.NewURL(yandexLongURL)); err != nil {
+	ctx := context.Background()
+
+	if err := s.storage.Store(ctx, yandexToken, model.NewURL(yandexLongURL)); err != nil {
 		s.T().Fatalf("Ошибка подготовки тестовых данных: %v", err)
 	}
 
-	url, ok := s.storage.Resolve(yandexToken)
-	if !ok {
-		s.T().Fatal("Ошибка извлечения тестовых данных из хранилища")
+	url, err := s.storage.Resolve(ctx, yandexToken)
+	if err != nil {
+		s.T().Fatalf("Ошибка извлечения тестовых данных из хранилища: %v", err)
 	}
 	if url.String() != yandexLongURL {
 		s.T().Fatal("Ошибка подготовки тестовых данных")
@@ -277,8 +280,8 @@ func (s *RouterTestSuite) postApiShorten(t *testing.T, baseURL string, contentTy
 
 func (s *RouterTestSuite) TestGzipCompression() {
 	svc := new(mocks.MockShortener)
-	svc.On("WithPingDB").Return(false)
-	svc.On("GenerateAndStore", yandexLongURL).Return(yandexToken, nil)
+	svc.On("WithDB").Return(false)
+	svc.On("GenerateAndStore", mock.Anything, yandexLongURL).Return(yandexToken, nil)
 
 	tbu := MakeTestApplicationConfig().TargetBaseURL
 	rt := handler.NewRouter(svc, tbu)
@@ -340,7 +343,7 @@ func (s *RouterTestSuite) TestGzipCompression() {
 
 func (s *RouterTestSuite) TestWebhook_Get_Ping() {
 	svc := new(mocks.MockShortener)
-	svc.On("WithPingDB").Return(true)
+	svc.On("WithDB").Return(true)
 
 	rt := handler.NewRouter(svc, MakeTestApplicationConfig().TargetBaseURL)
 

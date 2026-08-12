@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,7 +13,7 @@ import (
 
 type TokenToURL map[string]model.URL
 
-func NewTokenToURL() TokenToURL {
+func newTokenToURL() TokenToURL {
 	return make(map[string]model.URL)
 }
 
@@ -24,7 +25,7 @@ type LocalStorage struct {
 
 func NewLocalStorage() *LocalStorage {
 	return &LocalStorage{
-		data: NewTokenToURL(),
+		data: newTokenToURL(),
 	}
 }
 
@@ -84,7 +85,11 @@ func (s *LocalStorage) LoadFromFile(path string) error {
 }
 
 // Сохраняет longURL под токеном. Возвращает ErrTokenTaken, если токен занят.
-func (s *LocalStorage) Store(token string, longURL model.URL) error {
+func (s *LocalStorage) Store(ctx context.Context, token string, longURL model.URL) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("сохранение токена прервано из-за отмены контекста: %w", err)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -95,13 +100,17 @@ func (s *LocalStorage) Store(token string, longURL model.URL) error {
 	return nil
 }
 
-func (s *LocalStorage) Resolve(token string) (model.URL, bool) {
+func (s *LocalStorage) Resolve(ctx context.Context, token string) (model.URL, error) {
+	if err := ctx.Err(); err != nil {
+		return model.EmptyURL, fmt.Errorf("поиск токена прерван из-за отмены контекста: %w", err)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	url, ok := s.data[token]
 	if !ok {
-		return model.EmptyURL, false
+		return model.EmptyURL, NewErrTokenNotFound(token)
 	}
-	return url, true
+	return url, nil
 }

@@ -11,23 +11,23 @@ type MockPgStorage struct {
 	mock.Mock
 }
 
-func (m *MockPgStorage) PingContext(ctx context.Context) error {
+func (m *MockPgStorage) Ping(ctx context.Context) error {
 	args := m.Called(ctx)
 
 	return args.Error(0)
 }
 
-func (m *MockPgStorage) Store(token string, longURL model.URL) error {
-	args := m.Called(token, longURL)
+func (m *MockPgStorage) Store(ctx context.Context, token string, longURL model.URL) error {
+	args := m.Called(ctx, token, longURL)
 
 	return args.Error(0)
 }
 
-func (m *MockPgStorage) Resolve(token string) (model.URL, bool) {
-	args := m.Called(token)
+func (m *MockPgStorage) Resolve(ctx context.Context, token string) (model.URL, error) {
+	args := m.Called(ctx, token)
 
 	url := args.Get(0).(model.URL)
-	ok := args.Bool(1)
+	err := args.Error(1)
 
-	return url, ok
+	return url, err
 }

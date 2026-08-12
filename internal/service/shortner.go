@@ -12,13 +12,13 @@ import (
 )
 
 type BasicStorage interface {
-	Store(token string, longURL model.URL) error
-	Resolve(token string) (model.URL, bool)
+	Store(ctx context.Context, token string, longURL model.URL) error
+	Resolve(ctx context.Context, token string) (model.URL, error)
 }
 
 type StorageWithDB interface {
 	BasicStorage
-	PingContext(ctx context.Context) error
+	Ping(ctx context.Context) error
 }
 
 type ShortenerConfig struct {
@@ -54,7 +54,7 @@ const errCfgHeader = "ошибка конфигурации сервиса"
 
 func NewShortener(cfg ShortenerConfig) (*Shortener, error) {
 	if cfg.Storage == nil {
-		return nil, fmt.Errorf("%s: не задано локальное хранилище", errCfgHeader)
+		return nil, fmt.Errorf("%s: не задано хранилище", errCfgHeader)
 	}
 	if cfg.RandProv == nil {
 		return nil, fmt.Errorf("%s: не задан генератор случайных данных", errCfgHeader)
@@ -78,10 +78,14 @@ func NewShortener(cfg ShortenerConfig) (*Shortener, error) {
 	return &Shortener{config: cfg}, nil
 }
 
-func (s *Shortener) GenerateToken() (string, error) {
+func (s *Shortener) GenerateToken(ctx context.Context) (string, error) {
 	cfg := s.config
 
 	for attempt := 0; attempt < cfg.MaxGeneratingAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return "", fmt.Errorf("генерация токена прервана из-за отмены контекста: %w", err)
+		}
+
 		bytes, err := crypto.GenerateRandomBytes(s.config.RandProv, cfg.BytesToGenerate)
 		if err != nil {
 			return "", err
@@ -98,23 +102,23 @@ func (s *Shortener) GenerateToken() (string, error) {
 		cfg.MinTokenLength, cfg.MaxTokenLength, cfg.MaxGeneratingAttempts)
 }
 
-func (s *Shortener) GenerateAndStore(longURL string) (string, error) {
+func (s *Shortener) GenerateAndStore(ctx context.Context, longURL string) (string, error) {
 	for i := 0; i < s.config.MaxStoringAttempts; i++ {
-		token, err := s.GenerateToken()
+		token, err := s.GenerateToken(ctx)
 		if err != nil {
-			// Ошибка библиотечного генератора,
+			// Ошибка библиотечного генератора, контекста
 			// или не удалось выполнить ограничения на токен из конфига
 			return "", err
 		}
 
-		err = s.config.Storage.Store(token, model.NewURL(longURL))
+		err = s.config.Storage.Store(ctx, token, model.NewURL(longURL))
 		if err == nil {
 			// Успех
 			return token, nil
 		}
 		var ett *repository.ErrTokenTaken
 		if !errors.As(err, &ett) {
-			// Прочие возможные ошибки репозитория, отличные от "токен занят"
+			// Прочие возможные ошибки репозитория или контекста, отличные от "токен занят"
 			return "", err
 		}
 	}
@@ -122,20 +126,20 @@ func (s *Shortener) GenerateAndStore(longURL string) (string, error) {
 	return "", fmt.Errorf("не удалось сохранить URL за %d попыток", s.config.MaxStoringAttempts)
 }
 
-func (s *Shortener) Resolve(token string) (string, bool) {
-	url, ok := s.config.Storage.Resolve(token)
-	return url.String(), ok
+func (s *Shortener) Resolve(ctx context.Context, token string) (string, error) {
+	url, err := s.config.Storage.Resolve(ctx, token)
+	return url.String(), err
 }
 
 func (s *Shortener) PingDB(ctx context.Context) error {
 	swp, ok := s.config.Storage.(StorageWithDB)
 	if !ok {
-		return fmt.Errorf("хранилище не поддерживает метод PingContext")
+		return fmt.Errorf("хранилище не поддерживает метод Ping")
 	}
-	return swp.PingContext(ctx)
+	return swp.Ping(ctx)
 }
 
-func (s *Shortener) WithPingDB() bool {
+func (s *Shortener) WithDB() bool {
 	_, ok := s.config.Storage.(StorageWithDB)
 	return ok
 }

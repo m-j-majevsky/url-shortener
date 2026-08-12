@@ -19,6 +19,11 @@ type (
 	ErrTokenTaken struct {
 		Token string
 	}
+
+	// Ошибка, если запрашиваемый токен не найден
+	ErrTokenNotFound struct {
+		Token string
+	}
 )
 
 func NewErrTokenTaken(tok string) *ErrTokenTaken {
@@ -28,5 +33,15 @@ func NewErrTokenTaken(tok string) *ErrTokenTaken {
 }
 
 func (e *ErrTokenTaken) Error() string {
-	return fmt.Sprintf("токен %q занят", e.Token)
+	return fmt.Sprintf("токен %s занят", e.Token)
+}
+
+func NewErrTokenNotFound(tok string) *ErrTokenNotFound {
+	return &ErrTokenNotFound{
+		Token: tok,
+	}
+}
+
+func (e *ErrTokenNotFound) Error() string {
+	return fmt.Sprintf("токен %s не найден", e.Token)
 }

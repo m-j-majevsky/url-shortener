@@ -32,7 +32,7 @@ var (
 
 func (s *ShortenerSuite) SetupTest() {
 	s.storage = repository.NewLocalStorage()
-	if err := s.storage.Store(yandexToken, model.NewURL(yandexURL)); err != nil {
+	if err := s.storage.Store(context.Background(), yandexToken, model.NewURL(yandexURL)); err != nil {
 		s.T().Fatalf("Ошибка подготовки тестовых данных: %s", err.Error())
 	}
 }
@@ -69,7 +69,7 @@ func (s *ShortenerSuite) TestGenerateToken_LengthInRange() {
 	s.createShotnerInstance(s.storage)
 
 	for i := 0; i < 100; i++ {
-		token, err := s.svc.GenerateToken()
+		token, err := s.svc.GenerateToken(context.Background())
 		s.NoError(err)
 		s.NotEmpty(token)
 		s.True(len(token) >= s.svc.config.MinTokenLength && len(token) <= s.svc.config.MaxTokenLength)
@@ -109,7 +109,7 @@ func (s *ShortenerSuite) TestGenerateToken_RetryOnLengthMismatch_WithFixedProvid
 	svc, err := NewShortener(cfg)
 	s.Require().NoError(err)
 
-	_, err = svc.GenerateToken()
+	_, err = svc.GenerateToken(context.Background())
 	s.Error(err)
 	s.Contains(err.Error(), fmt.Sprintf("за %d попыток", cfg.MaxGeneratingAttempts))
 }
@@ -126,30 +126,31 @@ func (s *ShortenerSuite) TestGenerateRandomBytes_ErrorWhenProviderFails() {
 	svc, err := NewShortener(cfg)
 	s.Require().NoError(err)
 
-	_, err = svc.GenerateToken()
+	_, err = svc.GenerateToken(context.Background())
 	s.Error(err)
 }
 
 func (s *ShortenerSuite) TestResolve_ExistingToken() {
 	s.createShotnerInstance(s.storage)
 
-	url, found := s.svc.Resolve(yandexToken)
-	s.Require().True(found)
+	url, err := s.svc.Resolve(context.Background(), yandexToken)
+	s.Require().NoError(err)
 	s.Equal(yandexURL, url)
 }
 
-func (s *ShortenerSuite) TestResolve_NotExistingToken() {
+func (s *ShortenerSuite) TestResolve_ErrTokenNotFound() {
 	s.createShotnerInstance(s.storage)
 
-	url, found := s.svc.Resolve(someToken)
-	s.Require().False(found)
+	url, err := s.svc.Resolve(context.Background(), someToken)
+	var errTNF *repository.ErrTokenNotFound
+	s.ErrorAs(err, &errTNF)
 	s.Equal("", url)
 }
 
 func (s *ShortenerSuite) TestGenerateAndStore_Success() {
 	s.createShotnerInstance(s.storage)
 
-	url, err := s.svc.GenerateAndStore(mailToken)
+	url, err := s.svc.GenerateAndStore(context.Background(), mailToken)
 	s.Require().NoError(err)
 	s.NotEqual(model.EmptyURL, url)
 	s.NoError(encoding.IsValidBase62(url))
@@ -162,27 +163,27 @@ func (s *ShortenerSuite) TestPingDB() {
 	ctx := context.Background()
 
 	s.T().Run("успешный ping", func(t *testing.T) {
-		rst.On("PingContext", ctx).Return(nil).Once()
+		rst.On("Ping", ctx).Return(nil).Once()
 		s.NoError(s.svc.PingDB(ctx))
 		rst.AssertExpectations(s.T())
 	})
 
 	s.T().Run("ошибка при ping'е", func(t *testing.T) {
 		pfErr := fmt.Errorf("connection timeout")
-		rst.On("PingContext", ctx).Return(pfErr).Once()
+		rst.On("Ping", ctx).Return(pfErr).Once()
 		s.ErrorIs(s.svc.PingDB(ctx), pfErr)
 		rst.AssertExpectations(s.T())
 	})
 }
 
-func (s *ShortenerSuite) TestWithPingDB_Positive() {
+func (s *ShortenerSuite) TestWithDB_Positive() {
 	s.createShotnerInstance(new(mocks.MockPgStorage))
-	s.True(s.svc.WithPingDB())
+	s.True(s.svc.WithDB())
 }
 
-func (s *ShortenerSuite) TestWithPingDB_Negative() {
+func (s *ShortenerSuite) TestWithDB_Negative() {
 	s.createShotnerInstance(s.storage)
-	s.False(s.svc.WithPingDB())
+	s.False(s.svc.WithDB())
 }
 
 func TestShortenerSuite(t *testing.T) {
