@@ -95,7 +95,7 @@ func TestMain(m *testing.M) {
 	fmt.Println("\n>>> Terminating container...")
 	_ = container.Terminate(context.Background()) // best-effort cleanup
 
-	fmt.Println("\n>>> Done\n")
+	fmt.Println("\n>>> Done")
 	os.Exit(code)
 }
 
