@@ -140,7 +140,7 @@ func (rt *Router) resolveShortURL(w http.ResponseWriter, r *http.Request) {
 
 	var etnf *repository.ErrTokenNotFound
 	if errors.As(err, &etnf) {
-		logger.Log.Debug(fmt.Sprintf("token %s not found", token), zap.Error(etnf))
+		logger.Log.Debug(fmt.Sprintf("token %s not found", token), zap.Error(err))
 		http.Error(w, "URL не зарегистрирован", http.StatusBadRequest)
 		return
 	}

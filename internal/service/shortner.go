@@ -88,7 +88,7 @@ func (s *Shortener) GenerateToken(ctx context.Context) (string, error) {
 
 		bytes, err := crypto.GenerateRandomBytes(s.config.RandProv, cfg.BytesToGenerate)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("ошибка генерации случайного токена: %w", err)
 		}
 
 		token := encoding.EncodeToBase62(bytes)
@@ -108,6 +108,8 @@ func (s *Shortener) GenerateAndStore(ctx context.Context, longURL string) (strin
 		if err != nil {
 			// Ошибка библиотечного генератора, контекста
 			// или не удалось выполнить ограничения на токен из конфига
+			//
+			// Ошибку дополнительно не оборачиваю, т.к. все обертки сделаны в GenerateToken
 			return "", err
 		}
 
@@ -119,7 +121,7 @@ func (s *Shortener) GenerateAndStore(ctx context.Context, longURL string) (strin
 		var ett *repository.ErrTokenTaken
 		if !errors.As(err, &ett) {
 			// Прочие возможные ошибки репозитория или контекста, отличные от "токен занят"
-			return "", err
+			return "", fmt.Errorf("ошибка сохранения данных: %w", err)
 		}
 	}
 
@@ -128,7 +130,10 @@ func (s *Shortener) GenerateAndStore(ctx context.Context, longURL string) (strin
 
 func (s *Shortener) Resolve(ctx context.Context, token string) (string, error) {
 	url, err := s.config.Storage.Resolve(ctx, token)
-	return url.String(), err
+	if err != nil {
+		return "", fmt.Errorf("ошибка хранилища: %w", err)
+	}
+	return url.String(), nil
 }
 
 func (s *Shortener) PingDB(ctx context.Context) error {
