@@ -25,6 +25,8 @@ const (
 	TextPlain   = "text/plain"
 
 	pingPath = "/ping"
+
+	procTimeout = 5 * time.Second
 )
 
 type URLShortener interface {
@@ -105,7 +107,7 @@ func (rt *Router) pingDB(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), procTimeout)
 	defer cancel()
 
 	err := rt.service.PingDB(ctx)
@@ -126,7 +128,7 @@ func (rt *Router) resolveShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), procTimeout)
 	defer cancel()
 
 	url, err := rt.service.Resolve(ctx, token)
@@ -162,7 +164,7 @@ func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), procTimeout)
 	defer cancel()
 
 	token, shortenerErr := rt.service.GenerateAndStore(ctx, string(bodyBytes))
@@ -195,7 +197,7 @@ func (rt *Router) shortenLongURLForJson(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), procTimeout)
 	defer cancel()
 
 	token, shortenerErr := rt.service.GenerateAndStore(ctx, req.URL)
