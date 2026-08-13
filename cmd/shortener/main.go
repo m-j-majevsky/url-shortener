@@ -136,7 +136,7 @@ func loadLocalStorage(storagePath string) (*repository.LocalStorage, bool, error
 
 	if errors.Is(err, os.ErrNotExist) {
 		logger.Log.Info("Local storage file not found, starting with empty storage", zap.String("path", storagePath), event)
-		return storage, false, nil
+		return storage, true, nil
 	}
 
 	return nil, false, err
