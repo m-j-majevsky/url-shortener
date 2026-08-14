@@ -151,14 +151,14 @@ func (s *Shortener) WithDB() bool {
 }
 
 func (s *Shortener) BatchStore(ctx context.Context, req model.BatchSortenReq) (model.BatchSortenRes, error) {
-	reqLen := len(req)
-	res := make(model.BatchSortenRes, reqLen)
-	if reqLen == 0 {
-		return res, nil
+	if len(req) == 0 {
+		return model.BatchSortenRes{}, nil
 	}
-	batch := repository.NewBatch(req)
 
+	batch := repository.NewBatch(req)
+	res := make(model.BatchSortenRes, len(req))
 	var err error
+
 	for i := range batch {
 		if batch[i].Token, err = s.GenerateToken(ctx); err != nil {
 			// Ошибка библиотечного генератора, контекста,
