@@ -24,6 +24,14 @@ type (
 	ErrTokenNotFound struct {
 		Token string
 	}
+
+	BatchItem struct {
+		CorrelationID string
+		Token         string
+		OriginalURL   model.URL
+	}
+
+	Batch []BatchItem
 )
 
 func NewErrTokenTaken(tok string) *ErrTokenTaken {
@@ -44,4 +52,14 @@ func NewErrTokenNotFound(tok string) *ErrTokenNotFound {
 
 func (e *ErrTokenNotFound) Error() string {
 	return fmt.Sprintf("токен %s не найден", e.Token)
+}
+
+func NewBatch(req model.BatchSortenReq) Batch {
+	result := make(Batch, len(req))
+	for i := range req {
+		result[i].CorrelationID = req[i].CorrelationID
+		result[i].OriginalURL = req[i].OriginalURL
+		// result[i].Token остается пустым, пока токен не будет явно предоставлен сервисом
+	}
+	return result
 }

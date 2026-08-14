@@ -23,6 +23,7 @@ type (
 		Store(ctx context.Context, token string, longURL model.URL) error
 		Resolve(ctx context.Context, token string) (model.URL, error)
 		Ping(ctx context.Context) error
+		BatchStore(ctx context.Context, batch Batch) error
 	}
 
 	// DBTX - минимальный набор методов для работы с БД.
@@ -36,6 +37,7 @@ type (
 		QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 		Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 		Ping(ctx context.Context) error
+		Begin(ctx context.Context) (pgx.Tx, error)
 	}
 
 	// pgStorage - реализация PgStorage поверх pgxpool.
@@ -94,4 +96,31 @@ func (s *pgStorage) Resolve(ctx context.Context, token string) (model.URL, error
 
 func (s *pgStorage) Ping(ctx context.Context) error {
 	return s.db.Ping(ctx)
+}
+
+func (s *pgStorage) BatchStore(ctx context.Context, batch Batch) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("ошибка создания транзакции: %w", err)
+	}
+	// Откат из-за ошибки. Commit ниже завершает tx, и тогда Rollback вернёт
+	// sql.ErrTxDone — это нормально, ошибку игнорируем.
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	const qStore = "batch_store"
+	if _, err = tx.Prepare(ctx, qStore, `INSERT INTO shorten_urls (token, original_url) VALUES ($1, $2)`); err != nil {
+		return fmt.Errorf("ошибка подготовки запроса: %w", err)
+	}
+
+	for _, it := range batch {
+		if _, err = tx.Exec(ctx, qStore, it.Token, it.OriginalURL.String()); err != nil {
+			return fmt.Errorf("ошибка записи в БД: %w", err)
+		}
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("ошибка завершения транзакции: %w", err)
+	}
+
+	return nil
 }

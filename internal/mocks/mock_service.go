@@ -3,6 +3,7 @@ package mocks
 import (
 	"context"
 
+	"github.com/m-j-majevsky/url-shortener/internal/model"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -28,4 +29,9 @@ func (m *MockShortener) PingDB(ctx context.Context) error {
 func (m *MockShortener) WithDB() bool {
 	args := m.Called()
 	return args.Bool(0)
+}
+
+func (m *MockShortener) BatchStore(ctx context.Context, batch model.BatchSortenReq) (model.BatchSortenRes, error) {
+	args := m.Called(ctx, batch)
+	return args.Get(0).(model.BatchSortenRes), args.Error(1)
 }

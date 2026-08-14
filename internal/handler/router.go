@@ -31,6 +31,7 @@ const (
 
 type URLShortener interface {
 	GenerateAndStore(ctx context.Context, longURL string) (string, error)
+	BatchStore(ctx context.Context, batch model.BatchSortenReq) (model.BatchSortenRes, error)
 	Resolve(ctx context.Context, token string) (string, error)
 	WithDB() bool
 	PingDB(ctx context.Context) error
@@ -74,6 +75,13 @@ func NewRouter(svc URLShortener, targetBaseURL string) Router {
 			return responseContentTypeMiddleware(next, TextPlain)
 		})
 		cr.Post("/", mux.shortenLongURLForText)
+	})
+
+	cr.Group(func(cr chi.Router) {
+		cr.Use(func(next http.Handler) http.Handler {
+			return responseContentTypeMiddleware(next, AppJson)
+		})
+		cr.Post("/api/shorten/batch", mux.shortenBatch)
 	})
 
 	cr.Group(func(cr chi.Router) {
@@ -215,5 +223,53 @@ func (rt *Router) shortenLongURLForJson(w http.ResponseWriter, r *http.Request) 
 		logger.Log.Debug("error encoding response", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
+	}
+}
+
+func (rt *Router) shortenBatch(w http.ResponseWriter, r *http.Request) {
+	if rct := r.Header.Get(ContentType); rct != AppJson {
+		logger.Log.Debug("wrong request Content-Type: " + rct)
+		http.Error(w, "ожидается запрос с заголовком Content-Type: application/json", http.StatusBadRequest)
+		return
+	}
+
+	var batchReq model.BatchSortenReq
+	if err := json.NewDecoder(r.Body).Decode(&batchReq); err != nil {
+		logger.Log.Debug("cannot decode request JSON body", zap.Error(err))
+		http.Error(w, "ожидается валидный JSON объект в теле запроса", http.StatusBadRequest)
+		return
+	}
+	for _, item := range batchReq {
+		if isValidReqBody, validatorErr := valid.ValidateStruct(item); validatorErr != nil || !isValidReqBody {
+			logger.Log.Debug("request validation error", zap.Error(validatorErr))
+			http.Error(w, `в теле запроса ожидается JSON c массивом объектов, имеющих ключи correlation_id (строка) и original_url (валидный URL)`, http.StatusBadRequest)
+			return
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), procTimeout)
+	defer cancel()
+
+	batchRes, err := rt.service.BatchStore(ctx, batchReq)
+	if err != nil {
+		logger.Log.Debug("error providing batch of short URLs", zap.Error(err))
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	setBaseForShortenURL(rt.baseURL, batchRes)
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(batchRes); err != nil {
+		logger.Log.Debug("error encoding response", zap.Error(err))
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+}
+
+func setBaseForShortenURL(baseURL string, batch model.BatchSortenRes) {
+	for i := range batch {
+		token := batch[i].ShortURL.String()
+		fullShortenUrl := fmt.Sprintf("%s/%s", baseURL, token)
+		batch[i].ShortURL = model.NewURL(fullShortenUrl)
 	}
 }
