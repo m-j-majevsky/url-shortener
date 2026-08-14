@@ -239,12 +239,10 @@ func (rt *Router) shortenBatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "ожидается валидный JSON объект в теле запроса", http.StatusBadRequest)
 		return
 	}
-	for _, item := range batchReq {
-		if isValidReqBody, validatorErr := valid.ValidateStruct(item); validatorErr != nil || !isValidReqBody {
-			logger.Log.Debug("request validation error", zap.Error(validatorErr))
-			http.Error(w, `в теле запроса ожидается JSON c массивом объектов, имеющих ключи correlation_id (строка) и original_url (валидный URL)`, http.StatusBadRequest)
-			return
-		}
+	if err := validateBatchReq(batchReq); err != nil {
+		logger.Log.Debug("request validation error", zap.Error(err))
+		http.Error(w, `в теле запроса ожидается JSON c массивом объектов, имеющих ключи correlation_id (строка) и original_url (валидный URL)`, http.StatusBadRequest)
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), procTimeout)
@@ -264,6 +262,15 @@ func (rt *Router) shortenBatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+}
+
+func validateBatchReq(batch model.BatchSortenReq) error {
+	for _, item := range batch {
+		if ok, err := valid.ValidateStruct(item); err != nil || !ok {
+			return err
+		}
+	}
+	return nil
 }
 
 func setBaseForShortenURL(baseURL string, batch model.BatchSortenRes) {
