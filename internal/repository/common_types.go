@@ -2,6 +2,7 @@ package repository
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/m-j-majevsky/url-shortener/internal/model"
 )
@@ -15,9 +16,9 @@ type (
 
 	storageRepr []itemRepr
 
-	// Ошибка, когда токен уже занят
-	ErrTokenTaken struct {
-		Token string
+	// Ошибка, когда токены уже заняты
+	ErrTokensTaken struct {
+		Tokens []string
 	}
 
 	// Ошибка, если запрашиваемый токен не найден
@@ -26,22 +27,51 @@ type (
 	}
 
 	BatchItem struct {
-		CorrelationID string
-		Token         string
-		OriginalURL   model.URL
+		CorrelationID   string
+		Token           string
+		OriginalURL     model.URL
+		ConflictedToken bool
 	}
 
 	Batch []BatchItem
 )
 
-func NewErrTokenTaken(tok string) *ErrTokenTaken {
-	return &ErrTokenTaken{
-		Token: tok,
+func NewErrTokensTaken(tokens []string) *ErrTokensTaken {
+	return &ErrTokensTaken{
+		Tokens: tokens,
 	}
 }
 
-func (e *ErrTokenTaken) Error() string {
-	return fmt.Sprintf("токен %s занят", e.Token)
+func (e *ErrTokensTaken) Error() string {
+	return fmt.Sprintf("занятые токены: %s", strings.Join(e.Tokens, ", "))
+}
+
+func NewBatch(req model.BatchSortenReq) Batch {
+	result := make(Batch, len(req))
+	for i := range req {
+		result[i].CorrelationID = req[i].CorrelationID
+		result[i].OriginalURL = req[i].OriginalURL
+	}
+	return result
+}
+
+func CollectConflictedTokens(batch Batch) []string {
+	res := make([]string, 0, len(batch))
+	for _, it := range batch {
+		if it.ConflictedToken {
+			res = append(res, it.Token)
+		}
+	}
+	return res
+}
+
+func MayBeAddErrTokenTaken(batch Batch) (Batch, error) {
+	var err error
+	ctoks := CollectConflictedTokens(batch)
+	if len(ctoks) > 0 {
+		err = NewErrTokensTaken(ctoks)
+	}
+	return batch, err
 }
 
 func NewErrTokenNotFound(tok string) *ErrTokenNotFound {
@@ -52,14 +82,4 @@ func NewErrTokenNotFound(tok string) *ErrTokenNotFound {
 
 func (e *ErrTokenNotFound) Error() string {
 	return fmt.Sprintf("токен %s не найден", e.Token)
-}
-
-func NewBatch(req model.BatchSortenReq) Batch {
-	result := make(Batch, len(req))
-	for i := range req {
-		result[i].CorrelationID = req[i].CorrelationID
-		result[i].OriginalURL = req[i].OriginalURL
-		// result[i].Token остается пустым, пока токен не будет явно предоставлен сервисом
-	}
-	return result
 }

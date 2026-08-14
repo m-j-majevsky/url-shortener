@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -23,7 +24,8 @@ type (
 		Store(ctx context.Context, token string, longURL model.URL) error
 		Resolve(ctx context.Context, token string) (model.URL, error)
 		Ping(ctx context.Context) error
-		BatchStore(ctx context.Context, batch Batch) error
+		BatchStore(ctx context.Context, batch Batch) (Batch, error)
+		DeleteByTokens(ctx context.Context, tokens []string) error
 	}
 
 	// DBTX - минимальный набор методов для работы с БД.
@@ -65,8 +67,11 @@ func (s *pgStorage) Store(ctx context.Context, token string, longURL model.URL) 
 	if err != nil {
 		// Различаем нарушение уникальности и прочие ошибки по коду PG.
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique_violation
-			return NewErrTokenTaken(token)
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			// unique_violation
+			if strings.ToLower(pgErr.ConstraintName) == "shorten_urls_token_key" {
+				return NewErrTokensTaken([]string{token})
+			}
 		}
 
 		return fmt.Errorf("ошибка записи в БД: %w", err)
@@ -98,7 +103,45 @@ func (s *pgStorage) Ping(ctx context.Context) error {
 	return s.db.Ping(ctx)
 }
 
-func (s *pgStorage) BatchStore(ctx context.Context, batch Batch) error {
+func (s *pgStorage) BatchStore(ctx context.Context, batchReq Batch) (Batch, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return Batch{}, fmt.Errorf("ошибка создания транзакции: %w", err)
+	}
+	// Откат из-за ошибки. Commit ниже завершает tx, и тогда Rollback вернёт
+	// sql.ErrTxDone — это нормально, ошибку игнорируем.
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	const qStore = "batch_store"
+	if _, err = tx.Prepare(ctx, qStore, `INSERT INTO shorten_urls (token, original_url) VALUES ($1, $2)`); err != nil {
+		return Batch{}, fmt.Errorf("ошибка подготовки запроса: %w", err)
+	}
+
+	batchRes := make(Batch, len(batchReq))
+	copy(batchRes, batchReq)
+	for i := range batchRes {
+		if _, err = tx.Exec(ctx, qStore, batchRes[i].Token, batchRes[i].OriginalURL.String()); err != nil {
+			// Различаем нарушение уникальности и прочие ошибки по коду PG.
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				// unique_violation
+				if strings.ToLower(pgErr.ConstraintName) == "shorten_urls_token_key" {
+					batchRes[i].ConflictedToken = true
+				}
+			}
+			// Прочие ошибки считаем критичными
+			return Batch{}, fmt.Errorf("ошибка записи в БД: %w", err)
+		}
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return Batch{}, fmt.Errorf("ошибка завершения транзакции: %w", err)
+	}
+
+	return MayBeAddErrTokenTaken(batchRes)
+}
+
+func (s *pgStorage) DeleteByTokens(ctx context.Context, tokens []string) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("ошибка создания транзакции: %w", err)
@@ -107,14 +150,14 @@ func (s *pgStorage) BatchStore(ctx context.Context, batch Batch) error {
 	// sql.ErrTxDone — это нормально, ошибку игнорируем.
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	const qStore = "batch_store"
-	if _, err = tx.Prepare(ctx, qStore, `INSERT INTO shorten_urls (token, original_url) VALUES ($1, $2)`); err != nil {
+	const qDelete = "batch_delete"
+	if _, err = tx.Prepare(ctx, qDelete, `DELETE FROM shorten_urls WHERE token = $1`); err != nil {
 		return fmt.Errorf("ошибка подготовки запроса: %w", err)
 	}
 
-	for _, it := range batch {
-		if _, err = tx.Exec(ctx, qStore, it.Token, it.OriginalURL.String()); err != nil {
-			return fmt.Errorf("ошибка записи в БД: %w", err)
+	for _, tok := range tokens {
+		if _, err = tx.Exec(ctx, qDelete, tok); err != nil {
+			return fmt.Errorf("ошибка удаления из БД: %w", err)
 		}
 	}
 

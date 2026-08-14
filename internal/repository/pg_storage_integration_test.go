@@ -1,4 +1,4 @@
-//-go:build integration
+//go:build integration
 
 // Идея реализации тестов подсмотрена у Рафаэля Мустафина:
 // https://github.com/Bazys/practicum-webinars/blob/master/videos/repository_integration_test.go
@@ -15,7 +15,6 @@ package repository
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -36,8 +35,6 @@ var testDB *pgxpool.Pool
 func TestMain(m *testing.M) {
 	ctx := context.Background()
 
-	fmt.Println(">>> Starting Postgres container...")
-
 	// Поднимаем Postgres в Docker. testcontainers сам скачивает образ,
 	// назначает случайный порт и ждёт готовности БД.
 	container, err := tcpostgres.Run(ctx, "postgres:16-alpine",
@@ -56,21 +53,15 @@ func TestMain(m *testing.M) {
 	// Container lifetime managed by TestMain — Terminate after the suite.
 	// (testcontainers also auto-cleans via reaper if process dies.)
 
-	fmt.Println("\n>>> Check connection string...")
-
 	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
 		panic("connection string: " + err.Error())
 	}
 
-	fmt.Println("\n>>> Running migrations...")
-
 	// Накатываем миграции (shared-хелпер — его использует и main.go).
 	if err := migrations.RunMigrations(ctx, dsn); err != nil {
 		panic("migrations: " + err.Error())
 	}
-
-	fmt.Printf("\n>>> Preparing conn pool for dsn %q...\n", dsn)
 
 	// Пул для запросов приложения. В тестах берём щедрые лимиты,
 	// чтобы конкурентный тест на счётчик не упёрся в размер пула.
@@ -84,18 +75,10 @@ func TestMain(m *testing.M) {
 		panic("pgxpool: " + err.Error())
 	}
 
-	fmt.Println("\n>>> Running tests...")
-
 	code := m.Run()
 
-	fmt.Println("\n>>> Closing DB conns...")
-
 	testDB.Close()
-
-	fmt.Println("\n>>> Terminating container...")
 	_ = container.Terminate(context.Background()) // best-effort cleanup
-
-	fmt.Println("\n>>> Done")
 	os.Exit(code)
 }
 
@@ -134,13 +117,13 @@ func TestPgStorage_Integration_Resolve_ErrNotFound(t *testing.T) {
 	assert.ErrorAs(t, err, &errTNF)
 }
 
-func TestPgStorage_Integration_Resolve_ErrTokenTaken(t *testing.T) {
+func TestPgStorage_Integration_Resolve_ErrTokensTaken(t *testing.T) {
 	storage := newIntegrationPgStorage(t)
 	ctx := t.Context()
 
 	require.NoError(t, storage.Store(ctx, tok, model.NewURL(url)))
 
 	err := storage.Store(ctx, tok, model.URL("https://google.com"))
-	var errTT *ErrTokenTaken
+	var errTT *ErrTokensTaken
 	assert.ErrorAs(t, err, &errTT)
 }

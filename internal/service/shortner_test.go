@@ -65,15 +65,26 @@ func (s *ShortenerSuite) TestNewShortener_InvalidConfig_ReturnsError() {
 	s.Contains(err.Error(), errCfgHeader)
 }
 
-func (s *ShortenerSuite) TestGenerateToken_LengthInRange() {
+func (s *ShortenerSuite) TestGenerateTokens_Size_Fits() {
+	s.createShotnerInstance(s.storage)
+
+	for i := 0; i < 1000; i += 50 {
+		tokens, err := s.svc.generateTokens(i)
+		s.NoError(err)
+		s.Equal(i, len(tokens))
+	}
+}
+
+func (s *ShortenerSuite) TestGenerateTokens_LengthInRange() {
 	s.createShotnerInstance(s.storage)
 
 	for i := 0; i < 100; i++ {
-		token, err := s.svc.GenerateToken(context.Background())
+		tokens, err := s.svc.generateTokens(1)
 		s.NoError(err)
-		s.NotEmpty(token)
-		s.True(len(token) >= s.svc.config.MinTokenLength && len(token) <= s.svc.config.MaxTokenLength)
-		s.NoError(encoding.IsValidBase62(token))
+		s.Equal(1, len(tokens))
+		tok := tokens[0]
+		s.True(len(tok) >= s.svc.config.MinTokenLength && len(tok) <= s.svc.config.MaxTokenLength)
+		s.NoError(encoding.IsValidBase62(tok))
 	}
 }
 
@@ -91,7 +102,7 @@ func (r *FixedReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-func (s *ShortenerSuite) TestGenerateToken_RetryOnLengthMismatch_WithFixedProvider() {
+func (s *ShortenerSuite) TestGenerateTokens_RetryOnLengthMismatch_WithFixedProvider() {
 	cfg := createShortenerTestConfig(s.storage)
 	cfg.MinTokenLength = 8
 	cfg.MaxTokenLength = 10
@@ -109,7 +120,7 @@ func (s *ShortenerSuite) TestGenerateToken_RetryOnLengthMismatch_WithFixedProvid
 	svc, err := NewShortener(cfg)
 	s.Require().NoError(err)
 
-	_, err = svc.GenerateToken(context.Background())
+	_, err = svc.generateTokens(1)
 	s.Error(err)
 	s.Contains(err.Error(), fmt.Sprintf("за %d попыток", cfg.MaxGeneratingAttempts))
 }
@@ -126,7 +137,7 @@ func (s *ShortenerSuite) TestGenerateRandomBytes_ErrorWhenProviderFails() {
 	svc, err := NewShortener(cfg)
 	s.Require().NoError(err)
 
-	_, err = svc.GenerateToken(context.Background())
+	_, err = svc.generateTokens(1)
 	s.Error(err)
 }
 
