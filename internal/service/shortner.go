@@ -14,6 +14,7 @@ import (
 type BasicStorage interface {
 	Store(ctx context.Context, token string, longURL model.URL) error
 	Resolve(ctx context.Context, token string) (model.URL, error)
+	BatchStore(ctx context.Context, batch repository.Batch) error
 }
 
 type StorageWithDB interface {
@@ -106,7 +107,7 @@ func (s *Shortener) GenerateAndStore(ctx context.Context, longURL string) (strin
 	for i := 0; i < s.config.MaxStoringAttempts; i++ {
 		token, err := s.GenerateToken(ctx)
 		if err != nil {
-			// Ошибка библиотечного генератора, контекста
+			// Ошибка библиотечного генератора, контекста,
 			// или не удалось выполнить ограничения на токен из конфига
 			//
 			// Ошибку дополнительно не оборачиваю, т.к. все обертки сделаны в GenerateToken
@@ -147,4 +148,35 @@ func (s *Shortener) PingDB(ctx context.Context) error {
 func (s *Shortener) WithDB() bool {
 	_, ok := s.config.Storage.(StorageWithDB)
 	return ok
+}
+
+func (s *Shortener) BatchStore(ctx context.Context, req model.BatchSortenReq) (model.BatchSortenRes, error) {
+	reqLen := len(req)
+	res := make(model.BatchSortenRes, reqLen)
+	if reqLen == 0 {
+		return res, nil
+	}
+	batch := repository.NewBatch(req)
+
+	var err error
+	for i := range batch {
+		if batch[i].Token, err = s.GenerateToken(ctx); err != nil {
+			// Ошибка библиотечного генератора, контекста,
+			// или не удалось выполнить ограничения на токен из конфига
+			//
+			// Ошибку дополнительно не оборачиваю, т.к. все обертки сделаны в GenerateToken
+			return model.BatchSortenRes{}, err
+		}
+	}
+
+	if err = s.config.Storage.BatchStore(ctx, batch); err != nil {
+		return model.BatchSortenRes{}, fmt.Errorf("ошибка сохранения пакета: %w", err)
+	}
+
+	for i := range batch {
+		res[i].CorrelationID = batch[i].CorrelationID
+		res[i].ShortURL = model.URL(batch[i].Token)
+	}
+
+	return res, nil
 }

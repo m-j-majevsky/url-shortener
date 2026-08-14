@@ -10,6 +10,20 @@ type (
 	PostApiShortenRes struct {
 		Result string `json:"result"`
 	}
+
+	BatchSortenReqItem struct {
+		CorrelationID string `json:"correlation_id" valid:"required"`
+		OriginalURL   URL    `json:"original_url" valid:"url,required"`
+	}
+
+	BatchSortenReq []BatchSortenReqItem
+
+	BatchSortenResItem struct {
+		CorrelationID string `json:"correlation_id"`
+		ShortURL      URL    `json:"short_url"`
+	}
+
+	BatchSortenRes []BatchSortenResItem
 )
 
 type URL string

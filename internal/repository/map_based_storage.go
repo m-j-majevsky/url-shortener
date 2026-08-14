@@ -114,3 +114,33 @@ func (s *LocalStorage) Resolve(ctx context.Context, token string) (model.URL, er
 	}
 	return url, nil
 }
+
+func (s *LocalStorage) BatchStore(ctx context.Context, batch Batch) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("сохранение пакета отменено: %w", err)
+	}
+
+	// Смоделируем транзакционность обработки пакета следующим образом:
+	//
+	// 1. Лок на хранилище на всё время выполнения метода.
+	// 2. Сперва проверяем весь батч на наличие конфликтного токена хотя бы в одном элементе.
+	//    При наличии конфликта в хранилище не попадет ничего из батча.
+	//    Возвращается ошибка ErrTokenTaken.
+	// 3. Если конфликтов нет, сохраняем весь батч.
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, item := range batch {
+		token := item.Token
+		if _, exists := s.data[token]; exists {
+			return NewErrTokenTaken(token)
+		}
+	}
+
+	for _, item := range batch {
+		s.data[item.Token] = item.OriginalURL
+	}
+
+	return nil
+}
