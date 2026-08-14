@@ -94,16 +94,16 @@ func TestPgStorage_Store_Success(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPgStorage_Store_ErrTokenTaken(t *testing.T) {
+func TestPgStorage_Store_ErrTokensTaken(t *testing.T) {
 	repo, mock := newMockPgStorage(t)
 	defer mock.Close(t.Context())
 
 	mock.ExpectExec(`INSERT INTO shorten_urls`).
 		WithArgs(tok, url).
-		WillReturnError(&pgconn.PgError{Code: "23505"})
+		WillReturnError(&pgconn.PgError{Code: "23505", ConstraintName: "shorten_urls_token_key"})
 
 	err := repo.Store(t.Context(), tok, model.NewURL(url))
-	var errTT *ErrTokenTaken
+	var errTT *ErrTokensTaken
 	assert.ErrorAs(t, err, &errTT)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }

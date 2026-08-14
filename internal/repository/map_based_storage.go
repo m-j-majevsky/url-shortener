@@ -84,27 +84,19 @@ func (s *LocalStorage) LoadFromFile(path string) error {
 	return nil
 }
 
-// Сохраняет longURL под токеном. Возвращает ErrTokenTaken, если токен занят.
-func (s *LocalStorage) Store(ctx context.Context, token string, longURL model.URL) error {
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("сохранение токена прервано из-за отмены контекста: %w", err)
-	}
-
+// Сохраняет longURL под токеном. Возвращает ErrTokensTaken, если токен занят.
+func (s *LocalStorage) Store(_ context.Context, token string, longURL model.URL) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if _, exists := s.data[token]; exists {
-		return NewErrTokenTaken(token)
+		return NewErrTokensTaken([]string{token})
 	}
 	s.data[token] = longURL
 	return nil
 }
 
-func (s *LocalStorage) Resolve(ctx context.Context, token string) (model.URL, error) {
-	if err := ctx.Err(); err != nil {
-		return model.EmptyURL, fmt.Errorf("поиск токена прерван из-за отмены контекста: %w", err)
-	}
-
+func (s *LocalStorage) Resolve(_ context.Context, token string) (model.URL, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -115,31 +107,34 @@ func (s *LocalStorage) Resolve(ctx context.Context, token string) (model.URL, er
 	return url, nil
 }
 
-func (s *LocalStorage) BatchStore(ctx context.Context, batch Batch) error {
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("сохранение пакета отменено: %w", err)
-	}
-
-	// Смоделируем транзакционность обработки пакета следующим образом:
-	//
-	// 1. Лок на хранилище на всё время выполнения метода.
-	// 2. Сперва проверяем весь батч на наличие конфликтного токена хотя бы в одном элементе.
-	//    При наличии конфликта в хранилище не попадет ничего из батча.
-	//    Возвращается ошибка ErrTokenTaken.
-	// 3. Если конфликтов нет, сохраняем весь батч.
+func (s *LocalStorage) BatchStore(_ context.Context, batch Batch) (Batch, error) {
+	result := make(Batch, len(batch))
+	copy(result, batch)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for _, item := range batch {
-		token := item.Token
+	// Проходимся по батчу
+	for i := range result {
+		token := result[i].Token
 		if _, exists := s.data[token]; exists {
-			return NewErrTokenTaken(token)
+			// Конфликтные токены помечаем
+			result[i].ConflictedToken = true
+		} else {
+			// Неконфликтные записи сохраняем
+			s.data[token] = result[i].OriginalURL
 		}
 	}
 
-	for _, item := range batch {
-		s.data[item.Token] = item.OriginalURL
+	return MayBeAddErrTokenTaken(result)
+}
+
+func (s *LocalStorage) DeleteByTokens(_ context.Context, tokens []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, token := range tokens {
+		delete(s.data, token)
 	}
 
 	return nil

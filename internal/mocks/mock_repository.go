@@ -33,8 +33,14 @@ func (m *MockPgStorage) Resolve(ctx context.Context, token string) (model.URL, e
 	return url, err
 }
 
-func (m *MockPgStorage) BatchStore(ctx context.Context, batch repository.Batch) error {
+func (m *MockPgStorage) BatchStore(ctx context.Context, batch repository.Batch) (repository.Batch, error) {
 	args := m.Called(ctx, batch)
+
+	return args.Get(0).(repository.Batch), args.Error(0)
+}
+
+func (m *MockPgStorage) DeleteByTokens(ctx context.Context, tokens []string) error {
+	args := m.Called(ctx, tokens)
 
 	return args.Error(0)
 }

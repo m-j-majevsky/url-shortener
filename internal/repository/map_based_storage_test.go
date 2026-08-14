@@ -46,12 +46,12 @@ func (suite *MapBasedDBTestSuite) TestResolveSuccess() {
 	suite.Equal(yandexURL, url)
 }
 
-func (suite *MapBasedDBTestSuite) TestStoreWithErrTokenTaken() {
+func (suite *MapBasedDBTestSuite) TestStoreWithErrTokensTaken() {
 	err := suite.storage.Store(context.Background(), yandexToken, goURL)
 	suite.Require().Error(err)
-	var errTT *ErrTokenTaken
+	var errTT *ErrTokensTaken
 	suite.ErrorAs(err, &errTT)
-	suite.Equal(yandexToken, errTT.Token)
+	suite.Equal(yandexToken, errTT.Tokens[0])
 }
 
 func (suite *MapBasedDBTestSuite) TestStore() {
