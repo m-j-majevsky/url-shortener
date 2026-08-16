@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/m-j-majevsky/url-shortener/internal/model"
 	"github.com/m-j-majevsky/url-shortener/migrations"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -99,13 +98,11 @@ func TestPgStorage_Integration_CRUD(t *testing.T) {
 
 	require.NoError(t, storage.Ping(ctx))
 
-	modelUrl := model.NewURL(url)
-
-	require.NoError(t, storage.Store(ctx, tok, modelUrl))
+	require.NoError(t, storage.Store(ctx, tok, url))
 
 	res, err := storage.Resolve(ctx, tok)
 	require.NoError(t, err)
-	assert.Equal(t, modelUrl, res)
+	assert.Equal(t, url, res)
 }
 
 func TestPgStorage_Integration_Resolve_ErrNotFound(t *testing.T) {
@@ -117,13 +114,31 @@ func TestPgStorage_Integration_Resolve_ErrNotFound(t *testing.T) {
 	assert.ErrorAs(t, err, &errTNF)
 }
 
-func TestPgStorage_Integration_Resolve_ErrTokensTaken(t *testing.T) {
+func TestPgStorage_Integration_Store_ErrTokensTaken(t *testing.T) {
 	storage := newIntegrationPgStorage(t)
 	ctx := t.Context()
 
-	require.NoError(t, storage.Store(ctx, tok, model.NewURL(url)))
+	require.NoError(t, storage.Store(ctx, tok, url))
 
-	err := storage.Store(ctx, tok, model.URL("https://google.com"))
-	var errTT *ErrTokensTaken
+	err := storage.Store(ctx, tok, "https://google.com")
+	var errTT *ErrTokenTaken
 	assert.ErrorAs(t, err, &errTT)
+}
+
+func TestPgStorage_Integration_Store_ErrOriginalURLExists(t *testing.T) {
+	storage := newIntegrationPgStorage(t)
+	ctx := t.Context()
+
+	tok := "wtfTOK"
+	url := "https://ya.ru"
+	anotherTok := "TOKaNoTHer"
+
+	require.NoError(t, storage.Store(ctx, tok, url))
+
+	err := storage.Store(ctx, anotherTok, url)
+	var eoue *ErrOriginalURLExists
+	require.ErrorAs(t, err, &eoue)
+	assert.Equal(t, tok, eoue.StoredToken)
+	assert.Equal(t, url, eoue.URL)
+	// Проверки всех полей в деталях представлены в тестах на моке pgxmock
 }

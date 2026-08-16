@@ -3,7 +3,6 @@ package mocks
 import (
 	"context"
 
-	"github.com/m-j-majevsky/url-shortener/internal/model"
 	"github.com/m-j-majevsky/url-shortener/internal/repository"
 	"github.com/stretchr/testify/mock"
 )
@@ -18,16 +17,16 @@ func (m *MockPgStorage) Ping(ctx context.Context) error {
 	return args.Error(0)
 }
 
-func (m *MockPgStorage) Store(ctx context.Context, token string, longURL model.URL) error {
+func (m *MockPgStorage) Store(ctx context.Context, token string, longURL string) error {
 	args := m.Called(ctx, token, longURL)
 
 	return args.Error(0)
 }
 
-func (m *MockPgStorage) Resolve(ctx context.Context, token string) (model.URL, error) {
+func (m *MockPgStorage) Resolve(ctx context.Context, token string) (string, error) {
 	args := m.Called(ctx, token)
 
-	url := args.Get(0).(model.URL)
+	url := args.String(0)
 	err := args.Error(1)
 
 	return url, err

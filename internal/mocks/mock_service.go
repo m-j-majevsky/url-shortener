@@ -31,7 +31,7 @@ func (m *MockShortener) WithDB() bool {
 	return args.Bool(0)
 }
 
-func (m *MockShortener) BatchStore(ctx context.Context, batch model.BatchSortenReq) (model.BatchSortenRes, error) {
+func (m *MockShortener) BatchStore(ctx context.Context, batch model.BatchShortenReq) (model.BatchShortenRes, error) {
 	args := m.Called(ctx, batch)
-	return args.Get(0).(model.BatchSortenRes), args.Error(1)
+	return args.Get(0).(model.BatchShortenRes), args.Error(1)
 }

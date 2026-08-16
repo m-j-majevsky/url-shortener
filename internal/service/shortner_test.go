@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -26,16 +25,24 @@ var (
 	yandexURL   = "https://yandex.ru"
 
 	mailToken = "9aF7e72i"
+	mailURL   = "https://mail.ru"
 
 	someToken = "0000ZZZZ"
+	someURL   = "http://some.url.ru"
 )
 
 func (s *ShortenerSuite) SetupTest() {
 	s.storage = repository.NewLocalStorage()
-	if err := s.storage.Store(context.Background(), yandexToken, model.NewURL(yandexURL)); err != nil {
+	if err := s.storage.Store(s.T().Context(), yandexToken, yandexURL); err != nil {
 		s.T().Fatalf("Ошибка подготовки тестовых данных: %s", err.Error())
 	}
 }
+
+func TestShortenerSuite(t *testing.T) {
+	suite.Run(t, new(ShortenerSuite))
+}
+
+// Service Configuration tests
 
 func createShortenerTestConfig(storage BasicStorage) ShortenerConfig {
 	cfg := DefaultShortenerConfig()
@@ -52,6 +59,7 @@ func (s *ShortenerSuite) createShotnerInstance(storage BasicStorage) {
 }
 
 func (s *ShortenerSuite) TestNewShortener_ValidConfig_CreatesInstance() {
+	// Все проверки есть в вызываемом метое
 	s.createShotnerInstance(s.storage)
 }
 
@@ -64,6 +72,8 @@ func (s *ShortenerSuite) TestNewShortener_InvalidConfig_ReturnsError() {
 	s.Error(err)
 	s.Contains(err.Error(), errCfgHeader)
 }
+
+// generateTokens
 
 func (s *ShortenerSuite) TestGenerateTokens_Size_Fits() {
 	s.createShotnerInstance(s.storage)
@@ -141,37 +151,148 @@ func (s *ShortenerSuite) TestGenerateRandomBytes_ErrorWhenProviderFails() {
 	s.Error(err)
 }
 
+// Resolve
+
 func (s *ShortenerSuite) TestResolve_ExistingToken() {
+	// Контекст:
+	// (yandexToken -> yandexURL) уже лежат в хранилище;
+	// других данных в нём нет
+
 	s.createShotnerInstance(s.storage)
 
-	url, err := s.svc.Resolve(context.Background(), yandexToken)
+	url, err := s.svc.Resolve(s.T().Context(), yandexToken)
 	s.Require().NoError(err)
 	s.Equal(yandexURL, url)
 }
 
 func (s *ShortenerSuite) TestResolve_ErrTokenNotFound() {
+	// Контекст:
+	// (yandexToken -> yandexURL) уже лежат в хранилище;
+	// других данных в нём нет
+
 	s.createShotnerInstance(s.storage)
 
-	url, err := s.svc.Resolve(context.Background(), someToken)
+	url, err := s.svc.Resolve(s.T().Context(), someToken)
 	var errTNF *repository.ErrTokenNotFound
 	s.ErrorAs(err, &errTNF)
 	s.Equal("", url)
 }
 
+// GenerateAndStore
+
 func (s *ShortenerSuite) TestGenerateAndStore_Success() {
+	// Контекст:
+	// (yandexToken -> yandexURL) уже лежат в хранилище;
+	// других данных в нём нет
+
 	s.createShotnerInstance(s.storage)
 
-	url, err := s.svc.GenerateAndStore(context.Background(), mailToken)
+	token, err := s.svc.GenerateAndStore(s.T().Context(), mailToken)
 	s.Require().NoError(err)
-	s.NotEqual(model.EmptyURL, url)
-	s.NoError(encoding.IsValidBase62(url))
+	s.NotEmpty(token)
+	s.NoError(encoding.IsValidBase62(token))
 }
+
+func (s *ShortenerSuite) TestGenerateAndStore_Got_ErrOriginalURLExists() {
+	// Контекст:
+	// (yandexToken -> yandexURL) уже лежат в хранилище;
+	// других данных в нём нет
+
+	s.createShotnerInstance(s.storage)
+
+	token, err := s.svc.GenerateAndStore(s.T().Context(), yandexURL)
+
+	var eoue *repository.ErrOriginalURLExists
+	s.Require().ErrorAs(err, &eoue)
+	s.Assert().Equal(yandexToken, eoue.StoredToken)
+	s.Assert().Equal(yandexURL, eoue.URL)
+	s.Assert().Equal(yandexToken, token)
+
+	s.NoError(encoding.IsValidBase62(token))
+}
+
+// BatchStore
+
+func (s *ShortenerSuite) TestBatchStore_Success() {
+	// Контекст:
+	// (yandexToken -> yandexURL) уже лежат в хранилище;
+	// других данных в нём нет
+
+	s.createShotnerInstance(s.storage)
+
+	req := model.BatchShortenReq{
+		model.BatchShortenReqItem{
+			CorrelationID: "0",
+			OriginalURL:   mailURL,
+		},
+		model.BatchShortenReqItem{
+			CorrelationID: "1",
+			OriginalURL:   someURL,
+		},
+	}
+
+	res, err := s.svc.BatchStore(s.T().Context(), req)
+
+	s.Require().NoError(err)
+	s.Len(res, 2)
+
+	for i := range res {
+		s.Equal(req[i].CorrelationID, res[i].CorrelationID)
+		s.NoError(encoding.IsValidBase62(res[i].ShortURL))
+
+		url, err := s.svc.Resolve(s.T().Context(), res[i].ShortURL)
+		s.Require().NoError(err)
+		s.Equal(req[i].OriginalURL, url)
+	}
+}
+
+func (s *ShortenerSuite) TestBatchStore_Got_Conflicts_On_OriginalURL() {
+	// Контекст:
+	// (yandexToken -> yandexURL) уже лежат в хранилище;
+	// других данных в нём нет
+
+	s.createShotnerInstance(s.storage)
+
+	req := model.BatchShortenReq{
+		model.BatchShortenReqItem{
+			CorrelationID: "0",
+			OriginalURL:   yandexURL, // словим ErrOriginalURLExists
+		},
+		model.BatchShortenReqItem{
+			CorrelationID: "1",
+			OriginalURL:   someURL, // тут всё должно отработать хорошо
+		},
+	}
+
+	res, err := s.svc.BatchStore(s.T().Context(), req)
+
+	s.Require().NoError(err)
+	s.Len(res, 2)
+
+	// Конфликтный URL для нулевого элемента
+	s.Assert().True(res[0].ConflictedURL)
+
+	// Чистый первый элемент
+	s.Assert().False(res[1].ConflictedURL)
+
+	// В остальном данные валидны
+	for i := range res {
+		s.Equal(req[i].CorrelationID, res[i].CorrelationID)
+		s.NoError(encoding.IsValidBase62(res[i].ShortURL))
+
+		url, err := s.svc.Resolve(s.T().Context(), res[i].ShortURL)
+		s.Require().NoError(err)
+		s.Equal(req[i].OriginalURL, url)
+	}
+}
+
+// PingDB
 
 func (s *ShortenerSuite) TestPingDB() {
 	rst := new(mocks.MockPgStorage)
 	s.createShotnerInstance(rst)
 
-	ctx := context.Background()
+	ctx := s.T().Context()
 
 	s.T().Run("успешный ping", func(t *testing.T) {
 		rst.On("Ping", ctx).Return(nil).Once()
@@ -187,6 +308,8 @@ func (s *ShortenerSuite) TestPingDB() {
 	})
 }
 
+// WithDB
+
 func (s *ShortenerSuite) TestWithDB_Positive() {
 	s.createShotnerInstance(new(mocks.MockPgStorage))
 	s.True(s.svc.WithDB())
@@ -195,8 +318,4 @@ func (s *ShortenerSuite) TestWithDB_Positive() {
 func (s *ShortenerSuite) TestWithDB_Negative() {
 	s.createShotnerInstance(s.storage)
 	s.False(s.svc.WithDB())
-}
-
-func TestShortenerSuite(t *testing.T) {
-	suite.Run(t, new(ShortenerSuite))
 }

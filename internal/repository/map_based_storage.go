@@ -7,20 +7,28 @@ import (
 	"os"
 	"strconv"
 	"sync"
-
-	"github.com/m-j-majevsky/url-shortener/internal/model"
 )
 
-type TokenToURL map[string]model.URL
+type (
+	TokenToURL map[string]string
+
+	LocalStorage struct {
+		mu sync.Mutex
+
+		data TokenToURL
+	}
+
+	itemRepr struct {
+		UUID        string `json:"uuid"`
+		ShortURL    string `json:"short_url"`
+		OriginalURL string `json:"original_url"`
+	}
+
+	storageRepr []itemRepr
+)
 
 func newTokenToURL() TokenToURL {
-	return make(map[string]model.URL)
-}
-
-type LocalStorage struct {
-	mu sync.Mutex
-
-	data TokenToURL
+	return make(map[string]string)
 }
 
 func NewLocalStorage() *LocalStorage {
@@ -84,29 +92,42 @@ func (s *LocalStorage) LoadFromFile(path string) error {
 	return nil
 }
 
-// Сохраняет longURL под токеном. Возвращает ErrTokensTaken, если токен занят.
-func (s *LocalStorage) Store(_ context.Context, token string, longURL model.URL) error {
+// Сохраняет longURL под токеном. Возвращает ErrTokenTaken, если токен занят.
+func (s *LocalStorage) Store(_ context.Context, token string, longURL string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, exists := s.data[token]; exists {
-		return NewErrTokensTaken([]string{token})
+	// Для проверки нарушения уникальности longURL ограничусь перебором сохраненных значений,
+	// чтобы не возиться с введение дополнительного индекса (мыпы longURL -> token)
+	// или другого более эффективного механизма
+	for tok, url := range s.data {
+		if url == longURL {
+			return fmt.Errorf("%w", NewErrOriginalURLExists(tok, string(url)))
+		}
 	}
+
+	if _, exists := s.data[token]; exists {
+		return fmt.Errorf("%w", NewErrTokenTaken(token))
+	}
+
 	s.data[token] = longURL
 	return nil
 }
 
-func (s *LocalStorage) Resolve(_ context.Context, token string) (model.URL, error) {
+func (s *LocalStorage) Resolve(_ context.Context, token string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	url, ok := s.data[token]
 	if !ok {
-		return model.EmptyURL, NewErrTokenNotFound(token)
+		return "", fmt.Errorf("%w", NewErrTokenNotFound(token))
 	}
 	return url, nil
 }
 
+// Важно:
+// Гарантировать уникальность Batch.Token среди элемемнов параметра batch,
+// это ответсвенность вызывающего кода!
 func (s *LocalStorage) BatchStore(_ context.Context, batch Batch) (Batch, error) {
 	result := make(Batch, len(batch))
 	copy(result, batch)
@@ -116,17 +137,37 @@ func (s *LocalStorage) BatchStore(_ context.Context, batch Batch) (Batch, error)
 
 	// Проходимся по батчу
 	for i := range result {
-		token := result[i].Token
+		resIt := &result[i]
+		token := resIt.Token
+		url := resIt.OriginalURL
+
+		for t, u := range s.data {
+			if u == url {
+				// Конфликтный URL помечаем
+				resIt.ConflictedURL = true
+				// Соответствующий ему выданный ранее токен сохраняем
+				resIt.TokenOnConflictedURL = t
+			}
+		}
+
+		if resIt.ConflictedURL {
+			// Важно:
+			// При наличии конфликта по исходному URL,
+			// конфликт по токену не проверяем, он уже не имеет значения,
+			// но и данные при конфликте по URL записываться не должны.
+			continue
+		}
+
 		if _, exists := s.data[token]; exists {
-			// Конфликтные токены помечаем
-			result[i].ConflictedToken = true
+			// Конфликтный токен помечаем
+			resIt.ConflictedToken = true
 		} else {
-			// Неконфликтные записи сохраняем
-			s.data[token] = result[i].OriginalURL
+			// Запись resIt чиста, можно сохранять
+			s.data[token] = url
 		}
 	}
 
-	return MayBeAddErrTokenTaken(result)
+	return MayBeAddErrors(result)
 }
 
 func (s *LocalStorage) DeleteByTokens(_ context.Context, tokens []string) error {
