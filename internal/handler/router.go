@@ -31,7 +31,7 @@ const (
 
 type URLShortener interface {
 	GenerateAndStore(ctx context.Context, longURL string) (string, error)
-	BatchStore(ctx context.Context, batch model.BatchSortenReq) (model.BatchSortenRes, error)
+	BatchStore(ctx context.Context, batch model.BatchShortenReq) (model.BatchShortenRes, error)
 	Resolve(ctx context.Context, token string) (string, error)
 	WithDB() bool
 	PingDB(ctx context.Context) error
@@ -175,14 +175,23 @@ func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), procTimeout)
 	defer cancel()
 
+	resCode := http.StatusCreated
 	token, shortenerErr := rt.service.GenerateAndStore(ctx, string(bodyBytes))
 	if shortenerErr != nil {
-		logger.Log.Debug("error providing short URL", zap.Error(shortenerErr))
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
+		var eoue *repository.ErrOriginalURLExists
+		if errors.As(shortenerErr, &eoue) {
+			// В этом случае данные для пользователя есть,
+			// но необходимо сменить статус ответа!
+			resCode = http.StatusConflict
+		} else {
+			// Прочие конфликты и ошибки считаются внутренней проблемой сервиса
+			logger.Log.Debug("error providing short URL", zap.Error(shortenerErr))
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
 	}
 
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(resCode)
 	io.WriteString(w, fmt.Sprintf("%s/%s", rt.baseURL, token))
 }
 
@@ -193,7 +202,7 @@ func (rt *Router) shortenLongURLForJson(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var req model.PostApiShortenReq
+	var req model.ShortenReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		logger.Log.Debug("cannot decode request JSON body", zap.Error(err))
 		http.Error(w, "ожидается валидный JSON объект в теле запроса", http.StatusBadRequest)
@@ -208,15 +217,24 @@ func (rt *Router) shortenLongURLForJson(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), procTimeout)
 	defer cancel()
 
+	resCode := http.StatusCreated
 	token, shortenerErr := rt.service.GenerateAndStore(ctx, req.URL)
 	if shortenerErr != nil {
-		logger.Log.Debug("error providing short URL", zap.Error(shortenerErr))
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
+		var eoue *repository.ErrOriginalURLExists
+		if errors.As(shortenerErr, &eoue) {
+			// В этом случае данные для пользователя есть,
+			// но необходимо сменить статус ответа!
+			resCode = http.StatusConflict
+		} else {
+			// Прочие конфликты и ошибки считаются внутренней проблемой сервиса
+			logger.Log.Debug("error providing short URL", zap.Error(shortenerErr))
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	resp := model.PostApiShortenRes{
+	w.WriteHeader(resCode)
+	resp := model.ShortenRes{
 		Result: fmt.Sprintf("%s/%s", rt.baseURL, token),
 	}
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
@@ -233,7 +251,7 @@ func (rt *Router) shortenBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var batchReq model.BatchSortenReq
+	var batchReq model.BatchShortenReq
 	if err := json.NewDecoder(r.Body).Decode(&batchReq); err != nil {
 		logger.Log.Debug("cannot decode request JSON body", zap.Error(err))
 		http.Error(w, "ожидается валидный JSON объект в теле запроса", http.StatusBadRequest)
@@ -256,7 +274,7 @@ func (rt *Router) shortenBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setBaseForShortenURL(rt.baseURL, batchRes)
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(getResCode(batchRes))
 	if err := json.NewEncoder(w).Encode(batchRes); err != nil {
 		logger.Log.Debug("error encoding response", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -264,7 +282,16 @@ func (rt *Router) shortenBatch(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func validateBatchReq(batch model.BatchSortenReq) error {
+func getResCode(batchRes model.BatchShortenRes) int {
+	for _, it := range batchRes {
+		if it.ConflictedURL {
+			return http.StatusConflict
+		}
+	}
+	return http.StatusCreated
+}
+
+func validateBatchReq(batch model.BatchShortenReq) error {
 	for _, item := range batch {
 		if ok, err := valid.ValidateStruct(item); err != nil || !ok {
 			return err
@@ -273,10 +300,8 @@ func validateBatchReq(batch model.BatchSortenReq) error {
 	return nil
 }
 
-func setBaseForShortenURL(baseURL string, batch model.BatchSortenRes) {
+func setBaseForShortenURL(baseURL string, batch model.BatchShortenRes) {
 	for i := range batch {
-		token := batch[i].ShortURL.String()
-		fullShortenUrl := fmt.Sprintf("%s/%s", baseURL, token)
-		batch[i].ShortURL = model.NewURL(fullShortenUrl)
+		batch[i].ShortURL = fmt.Sprintf("%s/%s", baseURL, batch[i].ShortURL)
 	}
 }

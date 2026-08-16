@@ -1,0 +1,2 @@
+ALTER TABLE shorten_urls
+DROP CONSTRAINT IF EXISTS shorten_urls_original_url_key;

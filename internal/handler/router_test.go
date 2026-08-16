@@ -50,7 +50,7 @@ func (s *RouterTestSuite) SetupTest() {
 
 	ctx := context.Background()
 
-	if err := s.storage.Store(ctx, yandexToken, model.NewURL(yandexLongURL)); err != nil {
+	if err := s.storage.Store(ctx, yandexToken, yandexLongURL); err != nil {
 		s.T().Fatalf("Ошибка подготовки тестовых данных: %v", err)
 	}
 
@@ -58,7 +58,7 @@ func (s *RouterTestSuite) SetupTest() {
 	if err != nil {
 		s.T().Fatalf("Ошибка извлечения тестовых данных из хранилища: %v", err)
 	}
-	if url.String() != yandexLongURL {
+	if url != yandexLongURL {
 		s.T().Fatal("Ошибка подготовки тестовых данных")
 	}
 }
@@ -152,11 +152,21 @@ func (s *RouterTestSuite) TestWebhook() {
 			name:             "валидные данные (запрос text/plain)",
 			method:           http.MethodPost,
 			reqURL:           "/",
-			reqBody:          yandexLongURL,
+			reqBody:          "http://some.beautiful.url.io",
 			erResBody:        cfg.TargetBaseURL,
 			erResHeader:      handler.ContentType,
 			erResHeaderValue: handler.TextPlain,
 			erResCode:        http.StatusCreated,
+		},
+		{
+			name:             "валидные данные, но кофликт в исходном URL (запрос text/plain)",
+			method:           http.MethodPost,
+			reqURL:           "/",
+			reqBody:          yandexLongURL,
+			erResBody:        cfg.TargetBaseURL,
+			erResHeader:      handler.ContentType,
+			erResHeaderValue: handler.TextPlain,
+			erResCode:        http.StatusConflict,
 		},
 		// DELETE
 		{
@@ -223,14 +233,29 @@ func (s *RouterTestSuite) TestWebhook_shortenLongURLForJson() {
 	defer ts.Close()
 
 	s.T().Run("валидные данные (запрос application/json)", func(t *testing.T) {
-		body, err := json.Marshal(model.PostApiShortenReq{URL: yandexLongURL})
+		body, err := json.Marshal(model.ShortenReq{URL: "http://another.good.url.ru"})
 		require.NoError(t, err)
 		resp := s.postApiShorten(t, ts.URL, handler.AppJson, body)
 		assert.Equal(t, http.StatusCreated, resp.StatusCode())
 		assert.Equal(t, handler.AppJson, resp.Header().Get(handler.ContentType))
 		require.NotNil(t, resp.Body)
 		rb := io.NopCloser(bytes.NewReader(resp.Body()))
-		var rbJson model.PostApiShortenRes
+		var rbJson model.ShortenRes
+		err = json.NewDecoder(rb).Decode(&rbJson)
+		require.NoError(t, err)
+		condition := strings.HasPrefix(rbJson.Result, cfg.TargetBaseURL)
+		assert.True(t, condition, "Тело ответа не совпадает с ожидаемым")
+	})
+
+	s.T().Run("валидные данные, но кофликт в исходном URL (запрос application/json)", func(t *testing.T) {
+		body, err := json.Marshal(model.ShortenReq{URL: yandexLongURL})
+		require.NoError(t, err)
+		resp := s.postApiShorten(t, ts.URL, handler.AppJson, body)
+		assert.Equal(t, http.StatusConflict, resp.StatusCode())
+		assert.Equal(t, handler.AppJson, resp.Header().Get(handler.ContentType))
+		require.NotNil(t, resp.Body)
+		rb := io.NopCloser(bytes.NewReader(resp.Body()))
+		var rbJson model.ShortenRes
 		err = json.NewDecoder(rb).Decode(&rbJson)
 		require.NoError(t, err)
 		condition := strings.HasPrefix(rbJson.Result, cfg.TargetBaseURL)
@@ -238,7 +263,7 @@ func (s *RouterTestSuite) TestWebhook_shortenLongURLForJson() {
 	})
 
 	s.T().Run("неверный Content Type", func(t *testing.T) {
-		body, err := json.Marshal(model.PostApiShortenReq{URL: yandexLongURL})
+		body, err := json.Marshal(model.ShortenReq{URL: yandexLongURL})
 		require.NoError(t, err)
 		resp := s.postApiShorten(t, ts.URL, handler.TextPlain, body)
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode())
@@ -255,7 +280,7 @@ func (s *RouterTestSuite) TestWebhook_shortenLongURLForJson() {
 	})
 
 	s.T().Run("в теле запроса в поле url записан не URL", func(t *testing.T) {
-		body, err := json.Marshal(model.PostApiShortenReq{URL: "not-a-url"})
+		body, err := json.Marshal(model.ShortenReq{URL: "not-a-url"})
 		require.NoError(t, err)
 		resp := s.postApiShorten(t, ts.URL, handler.AppJson, body)
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode())
@@ -276,6 +301,134 @@ func (s *RouterTestSuite) postApiShorten(t *testing.T, baseURL string, contentTy
 	)
 
 	return resp
+}
+
+func (s *RouterTestSuite) TestWebhook_shortenBatch_Success() {
+	tbu := MakeTestApplicationConfig().TargetBaseURL
+
+	batchReq := model.BatchShortenReq{
+		model.BatchShortenReqItem{
+			CorrelationID: "0",
+			OriginalURL:   "http://example.one.com",
+		},
+		model.BatchShortenReqItem{
+			CorrelationID: "1",
+			OriginalURL:   "http://example.two.com",
+		},
+	}
+
+	batchRes := model.BatchShortenRes{
+		model.BatchShortenResItem{
+			CorrelationID: batchReq[0].CorrelationID,
+			ShortURL:      "tok4N0",
+			ConflictedURL: false,
+		},
+		model.BatchShortenResItem{
+			CorrelationID: batchReq[1].CorrelationID,
+			ShortURL:      "t0k4N1",
+			ConflictedURL: false,
+		},
+	}
+
+	svc := new(mocks.MockShortener)
+	svc.On("WithDB").Return(true)
+	svc.On("BatchStore", mock.Anything, batchReq).Return(batchRes, nil)
+
+	rt := handler.NewRouter(svc, tbu)
+
+	ts := httptest.NewServer(rt)
+	defer ts.Close()
+
+	body, err := json.Marshal(batchReq)
+	require.NoError(s.T(), err)
+
+	req := resty.New().SetRedirectPolicy(resty.NoRedirectPolicy()).R()
+	req.Method = http.MethodPost
+	req.Header.Set(handler.ContentType, handler.AppJson)
+	req.URL = ts.URL + "/api/shorten/batch"
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	resp, err := req.Send()
+
+	require.Conditionf(s.T(),
+		func() bool { return err == nil || isErrAutoRedirectDisabled(err) },
+		"ошибка при создании HTTP-запроса к серверу: %s", err,
+	)
+
+	assert.Equal(s.T(), http.StatusCreated, resp.StatusCode())
+	assert.Equal(s.T(), handler.AppJson, resp.Header().Get(handler.ContentType))
+	require.NotNil(s.T(), resp.Body)
+
+	rb := io.NopCloser(bytes.NewReader(resp.Body()))
+	var rbJson model.BatchShortenRes
+	err = json.NewDecoder(rb).Decode(&rbJson)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), rbJson, len(batchRes))
+
+	svc.AssertExpectations(s.T())
+}
+
+func (s *RouterTestSuite) TestWebhook_shortenBatch_Success_With_Conflict_On_URL() {
+	tbu := MakeTestApplicationConfig().TargetBaseURL
+
+	batchReq := model.BatchShortenReq{
+		model.BatchShortenReqItem{
+			CorrelationID: "0",
+			OriginalURL:   "http://example.one.com",
+		},
+		model.BatchShortenReqItem{
+			CorrelationID: "1",
+			OriginalURL:   "http://example.two.com",
+		},
+	}
+
+	batchRes := model.BatchShortenRes{
+		model.BatchShortenResItem{
+			CorrelationID: batchReq[0].CorrelationID,
+			ShortURL:      "tok4N0",
+			ConflictedURL: false,
+		},
+		model.BatchShortenResItem{
+			CorrelationID: batchReq[1].CorrelationID,
+			ShortURL:      "t0k4N1",
+			ConflictedURL: true,
+		},
+	}
+
+	svc := new(mocks.MockShortener)
+	svc.On("WithDB").Return(true)
+	svc.On("BatchStore", mock.Anything, batchReq).Return(batchRes, nil)
+
+	rt := handler.NewRouter(svc, tbu)
+
+	ts := httptest.NewServer(rt)
+	defer ts.Close()
+
+	body, err := json.Marshal(batchReq)
+	require.NoError(s.T(), err)
+
+	req := resty.New().SetRedirectPolicy(resty.NoRedirectPolicy()).R()
+	req.Method = http.MethodPost
+	req.Header.Set(handler.ContentType, handler.AppJson)
+	req.URL = ts.URL + "/api/shorten/batch"
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	resp, err := req.Send()
+
+	require.Conditionf(s.T(),
+		func() bool { return err == nil || isErrAutoRedirectDisabled(err) },
+		"ошибка при создании HTTP-запроса к серверу: %s", err,
+	)
+
+	assert.Equal(s.T(), http.StatusConflict, resp.StatusCode())
+	assert.Equal(s.T(), handler.AppJson, resp.Header().Get(handler.ContentType))
+	require.NotNil(s.T(), resp.Body)
+
+	rb := io.NopCloser(bytes.NewReader(resp.Body()))
+	var rbJson model.BatchShortenRes
+	err = json.NewDecoder(rb).Decode(&rbJson)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), rbJson, len(batchRes))
+
+	svc.AssertExpectations(s.T())
 }
 
 func (s *RouterTestSuite) TestGzipCompression() {

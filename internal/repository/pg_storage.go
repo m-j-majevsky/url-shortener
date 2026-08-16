@@ -8,7 +8,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/m-j-majevsky/url-shortener/internal/model"
 )
 
 type (
@@ -21,8 +20,8 @@ type (
 	//  1. Бизнес-логику (handler) можно тестировать на моке интерфейса, без БД.
 	//  2. Можно подменить реализацию (например, in-memory кэш для тестов).
 	PgStorage interface {
-		Store(ctx context.Context, token string, longURL model.URL) error
-		Resolve(ctx context.Context, token string) (model.URL, error)
+		Store(ctx context.Context, token string, longURL string) error
+		Resolve(ctx context.Context, token string) (string, error)
 		Ping(ctx context.Context) error
 		BatchStore(ctx context.Context, batch Batch) (Batch, error)
 		DeleteByTokens(ctx context.Context, tokens []string) error
@@ -58,90 +57,145 @@ func NewPgStorage(db DBTX) PgStorage {
 	}
 }
 
-func (s *pgStorage) Store(ctx context.Context, token string, longURL model.URL) error {
-	const q = `INSERT INTO shorten_urls (token, original_url)
-	           VALUES ($1, $2)`
+func (s *pgStorage) Store(ctx context.Context, token string, longURL string) error {
+	// Важно: ON CONFLICT срабатывает _только_ для original_url.
+	// Конфликты по token будут падать в ошибку, которую мы обработаем ниже.
+	const q = `INSERT INTO shorten_urls (token, original_url) 
+			   VALUES ($1, $2)
+			   ON CONFLICT (original_url) DO UPDATE 
+			   SET original_url = EXCLUDED.original_url 
+			   RETURNING token`
 
-	_, err := s.db.Exec(ctx, q, token, longURL.String())
+	var returnedToken string
 
-	if err != nil {
-		// Различаем нарушение уникальности и прочие ошибки по коду PG.
+	row := s.db.QueryRow(ctx, q, token, longURL)
+	if err := row.Scan(&returnedToken); err != nil {
+		// Различаем по коду PG нарушение уникальности и прочие ошибки
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			// unique_violation
+			// Сработало ограничение уникальности
 			if strings.ToLower(pgErr.ConstraintName) == "shorten_urls_token_key" {
-				return NewErrTokensTaken([]string{token})
+				return fmt.Errorf("%w", NewErrTokenTaken(token))
 			}
+
+			// Если вдруг конфликт по другому ограничению, которое мы не ожидали
+			return fmt.Errorf("неожиданный конфликт ограничения %s: %w", pgErr.ConstraintName, err)
 		}
 
+		// Прочие ошибки
 		return fmt.Errorf("ошибка записи в БД: %w", err)
+	}
+
+	// Если мы здесь, значит либо INSERT прошел успешно, либо сработал ON CONFLICT (DO UPDATE)
+	//
+	// Признаком ON CONFLICT считаем отличие returnedToken от item.Token
+	if token != returnedToken {
+		return fmt.Errorf("%w", NewErrOriginalURLExists(returnedToken, longURL))
 	}
 
 	return nil
 }
 
-func (s *pgStorage) Resolve(ctx context.Context, token string) (model.URL, error) {
+func (s *pgStorage) Resolve(ctx context.Context, token string) (string, error) {
 	const q = `SELECT original_url
-	             FROM shorten_urls
-	            WHERE token = $1`
+	           FROM shorten_urls
+	           WHERE token = $1`
 
 	var url string
 	err := s.db.QueryRow(ctx, q, token).Scan(&url)
 
 	if errors.Is(err, pgx.ErrNoRows) {
-		return model.EmptyURL, NewErrTokenNotFound(token)
+		return "", fmt.Errorf("%w", NewErrTokenNotFound(token))
 	}
 
 	if err != nil {
-		return model.EmptyURL, fmt.Errorf("ошибка запроса URL по токену %s: %w", token, err)
+		return "", fmt.Errorf("ошибка запроса URL по токену %s: %w", token, err)
 	}
 
-	return model.NewURL(url), nil
+	return url, nil
 }
 
 func (s *pgStorage) Ping(ctx context.Context) error {
 	return s.db.Ping(ctx)
 }
 
+// Важно:
+// Гарантировать уникальность Batch.Token среди элемемнов параметра batch,
+// это ответсвенность вызывающего кода!
 func (s *pgStorage) BatchStore(ctx context.Context, batchReq Batch) (Batch, error) {
+	if len(batchReq) == 0 {
+		return Batch{}, nil
+	}
+
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return Batch{}, fmt.Errorf("ошибка создания транзакции: %w", err)
 	}
-	// Откат из-за ошибки. Commit ниже завершает tx, и тогда Rollback вернёт
-	// sql.ErrTxDone — это нормально, ошибку игнорируем.
+	// Откат по умолчанию, будет перезаписан Commit, если всё ок
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	const qStore = "batch_store"
-	if _, err = tx.Prepare(ctx, qStore, `INSERT INTO shorten_urls (token, original_url) VALUES ($1, $2)`); err != nil {
+	const qStoreName = "batch_store"
+	// Важно: ON CONFLICT срабатывает _только_ для original_url.
+	// Конфликты по token будут падать в ошибку, которую мы обработаем ниже.
+	const qStore = `INSERT INTO shorten_urls (token, original_url) 
+					VALUES ($1, $2)
+					ON CONFLICT (original_url) DO UPDATE 
+			        SET original_url = EXCLUDED.original_url 
+					RETURNING token`
+
+	if _, err = tx.Prepare(ctx, qStoreName, qStore); err != nil {
 		return Batch{}, fmt.Errorf("ошибка подготовки запроса: %w", err)
 	}
 
 	batchRes := make(Batch, len(batchReq))
 	copy(batchRes, batchReq)
+
 	for i := range batchRes {
-		if _, err = tx.Exec(ctx, qStore, batchRes[i].Token, batchRes[i].OriginalURL.String()); err != nil {
-			// Различаем нарушение уникальности и прочие ошибки по коду PG.
+		item := &batchRes[i]
+
+		row := tx.QueryRow(ctx, qStoreName, item.Token, item.OriginalURL)
+
+		var returnedToken string
+		if err := row.Scan(&returnedToken); err != nil {
+			// Различаем по коду PG нарушение уникальности shorten_urls_token_key и прочие ошибки
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-				// unique_violation
+				// Сработало ограничение уникальности
 				if strings.ToLower(pgErr.ConstraintName) == "shorten_urls_token_key" {
-					batchRes[i].ConflictedToken = true
+					item.ConflictedToken = true
+					continue
 				}
+
+				// Если вдруг конфликт по другому ограничению, которое мы не ожидали - падаем
+				return Batch{}, fmt.Errorf("неожиданный конфликт ограничения %s: %w", pgErr.ConstraintName, err)
 			}
-			// Прочие ошибки считаем критичными
+
+			// Прочие ошибки считаем критичными для транзакции
 			return Batch{}, fmt.Errorf("ошибка записи в БД: %w", err)
 		}
-	}
 
-	if err = tx.Commit(ctx); err != nil {
+		// Если мы здесь, значит либо INSERT прошел успешно, либо сработал ON CONFLICT (DO NOTHING)
+		//
+		// Признаком ON CONFLICT DO NOTHING считаем отличие returnedToken от item.Token
+		if item.Token != returnedToken {
+			// Такую запись в батче помечаем для дальнейшей обработки в вызывающем коде
+			item.ConflictedURL = true
+			item.TokenOnConflictedURL = returnedToken
+		}
+	} // for
+
+	if err := tx.Commit(ctx); err != nil {
 		return Batch{}, fmt.Errorf("ошибка завершения транзакции: %w", err)
 	}
 
-	return MayBeAddErrTokenTaken(batchRes)
+	return MayBeAddErrors(batchRes)
 }
 
 func (s *pgStorage) DeleteByTokens(ctx context.Context, tokens []string) error {
+	if len(tokens) == 0 {
+		return nil
+	}
+
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("ошибка создания транзакции: %w", err)
