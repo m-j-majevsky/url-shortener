@@ -174,9 +174,9 @@ func (s *pgStorage) BatchStore(ctx context.Context, batchReq Batch) (Batch, erro
 			return Batch{}, fmt.Errorf("ошибка записи в БД: %w", err)
 		}
 
-		// Если мы здесь, значит либо INSERT прошел успешно, либо сработал ON CONFLICT (DO NOTHING)
+		// Если мы здесь, значит либо INSERT прошел успешно, либо сработал ON CONFLICT (DO UPDATE)
 		//
-		// Признаком ON CONFLICT DO NOTHING считаем отличие returnedToken от item.Token
+		// Признаком ON CONFLICT считаем отличие returnedToken от item.Token
 		if item.Token != returnedToken {
 			// Такую запись в батче помечаем для дальнейшей обработки в вызывающем коде
 			item.ConflictedURL = true
