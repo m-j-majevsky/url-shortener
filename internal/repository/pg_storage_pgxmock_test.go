@@ -469,7 +469,7 @@ func TestBatchStore_TransactionError(t *testing.T) {
 // Важно:
 //
 // Сценарий "точная копия строки (token, origianl_url) на входе в INSERT" обрабатывается корректно
-// за счет ON CONFLICT (original_url) DO NOTHING RETURNING token, проверка которого
+// за счет ON CONFLICT (original_url) DO UPDATE ... RETURNING token, проверка которого
 // выполняется до срабатывания ограничения shorten_urls_token_key, откуда следует обработка
 // такой входной строки по сценарию ErrOriginalURLExists, т.е. возврату пользователю существующих данных
 // без перезаписи, но со статусом конфликта по исходному URL.
