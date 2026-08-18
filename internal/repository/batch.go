@@ -8,12 +8,11 @@ import (
 
 type (
 	BatchItem struct {
-		CorrelationID        string
-		Token                string
-		TokenOnConflictedURL string
-		OriginalURL          string
-		ConflictedToken      bool
-		ConflictedURL        bool
+		CorrelationID   string
+		Token           string
+		OriginalURL     string
+		ConflictedToken bool
+		ConflictedURL   bool
 	}
 
 	Batch []BatchItem
@@ -39,7 +38,7 @@ func MayBeAddErrors(batch Batch) (Batch, error) {
 		}
 
 		if it.ConflictedURL {
-			errs = append(errs, NewErrOriginalURLExists(it.TokenOnConflictedURL, it.OriginalURL))
+			errs = append(errs, NewErrOriginalURLExists(it.Token, it.OriginalURL))
 		}
 	}
 

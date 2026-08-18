@@ -81,7 +81,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func newIntegrationPgStorage(t *testing.T) PgStorage {
+func newIntegrationPgStorage(t *testing.T) *pgStorage {
 	t.Helper()
 	require.NotNil(t, testDB, "testDB не инициализирован")
 

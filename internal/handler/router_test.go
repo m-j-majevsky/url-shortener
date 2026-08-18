@@ -14,10 +14,10 @@ import (
 	"testing"
 
 	"github.com/go-resty/resty/v2"
+	"github.com/pashagolub/pgxmock/v4"
 
 	"github.com/m-j-majevsky/url-shortener/internal/config"
 	"github.com/m-j-majevsky/url-shortener/internal/handler"
-	"github.com/m-j-majevsky/url-shortener/internal/mocks"
 	"github.com/m-j-majevsky/url-shortener/internal/model"
 	"github.com/m-j-majevsky/url-shortener/internal/repository"
 	"github.com/m-j-majevsky/url-shortener/internal/service"
@@ -330,8 +330,12 @@ func (s *RouterTestSuite) TestWebhook_shortenBatch_Success() {
 		},
 	}
 
-	svc := new(mocks.MockShortener)
-	svc.On("WithDB").Return(true)
+	svc := new(service.MockShortener)
+
+	sc := service.DefaultShortenerConfig()
+	sc.Storage, _ = newMockPgStorage(s.T())
+
+	svc.On("GetConfig").Return(sc)
 	svc.On("BatchStore", mock.Anything, batchReq).Return(batchRes, nil)
 
 	rt := handler.NewRouter(svc, tbu)
@@ -394,9 +398,13 @@ func (s *RouterTestSuite) TestWebhook_shortenBatch_Success_With_Conflict_On_URL(
 		},
 	}
 
-	svc := new(mocks.MockShortener)
-	svc.On("WithDB").Return(true)
+	svc := new(service.MockShortener)
 	svc.On("BatchStore", mock.Anything, batchReq).Return(batchRes, nil)
+
+	sc := service.DefaultShortenerConfig()
+	sc.Storage, _ = newMockPgStorage(s.T())
+
+	svc.On("GetConfig").Return(sc)
 
 	rt := handler.NewRouter(svc, tbu)
 
@@ -432,8 +440,8 @@ func (s *RouterTestSuite) TestWebhook_shortenBatch_Success_With_Conflict_On_URL(
 }
 
 func (s *RouterTestSuite) TestGzipCompression() {
-	svc := new(mocks.MockShortener)
-	svc.On("WithDB").Return(false)
+	svc := new(service.MockShortener)
+	svc.On("GetConfig").Return(service.DefaultShortenerConfig())
 	svc.On("GenerateAndStore", mock.Anything, yandexLongURL).Return(yandexToken, nil)
 
 	tbu := MakeTestApplicationConfig().TargetBaseURL
@@ -494,9 +502,20 @@ func (s *RouterTestSuite) TestGzipCompression() {
 	})
 }
 
+func newMockPgStorage(t *testing.T) (service.BasicStorage, pgxmock.PgxConnIface) {
+	t.Helper()
+	mock, err := pgxmock.NewConn(pgxmock.QueryMatcherOption(pgxmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	return repository.NewPgStorage(mock), mock
+}
+
 func (s *RouterTestSuite) TestWebhook_Get_Ping() {
-	svc := new(mocks.MockShortener)
-	svc.On("WithDB").Return(true)
+	svc := new(service.MockShortener)
+
+	sc := service.DefaultShortenerConfig()
+	sc.Storage, _ = newMockPgStorage(s.T())
+
+	svc.On("GetConfig").Return(sc)
 
 	rt := handler.NewRouter(svc, MakeTestApplicationConfig().TargetBaseURL)
 
@@ -504,7 +523,7 @@ func (s *RouterTestSuite) TestWebhook_Get_Ping() {
 	defer ts.Close()
 
 	s.T().Run("успешный ping БД", func(t *testing.T) {
-		svc.On("PingDB", mock.Anything).Return(nil).Once()
+		svc.On("Ping", mock.Anything).Return(nil).Once()
 
 		req := resty.New().R()
 		req.Method = http.MethodGet
@@ -517,7 +536,7 @@ func (s *RouterTestSuite) TestWebhook_Get_Ping() {
 	})
 
 	s.T().Run("ошибка ping БД", func(t *testing.T) {
-		svc.On("PingDB", mock.Anything).Return(errors.New("connection timeout")).Once()
+		svc.On("Ping", mock.Anything).Return(errors.New("connection timeout")).Once()
 
 		req := resty.New().R()
 		req.Method = http.MethodGet

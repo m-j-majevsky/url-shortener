@@ -102,12 +102,12 @@ func (s *LocalStorage) Store(_ context.Context, token string, longURL string) er
 	// или другого более эффективного механизма
 	for tok, url := range s.data {
 		if url == longURL {
-			return fmt.Errorf("%w", NewErrOriginalURLExists(tok, string(url)))
+			return NewErrOriginalURLExists(tok, string(url))
 		}
 	}
 
 	if _, exists := s.data[token]; exists {
-		return fmt.Errorf("%w", NewErrTokenTaken(token))
+		return NewErrTokenTaken(token)
 	}
 
 	s.data[token] = longURL
@@ -120,7 +120,7 @@ func (s *LocalStorage) Resolve(_ context.Context, token string) (string, error) 
 
 	url, ok := s.data[token]
 	if !ok {
-		return "", fmt.Errorf("%w", NewErrTokenNotFound(token))
+		return "", NewErrTokenNotFound(token)
 	}
 	return url, nil
 }
@@ -146,7 +146,7 @@ func (s *LocalStorage) BatchStore(_ context.Context, batch Batch) (Batch, error)
 				// Конфликтный URL помечаем
 				resIt.ConflictedURL = true
 				// Соответствующий ему выданный ранее токен сохраняем
-				resIt.TokenOnConflictedURL = t
+				resIt.Token = t
 			}
 		}
 

@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/m-j-majevsky/url-shortener/internal/encoding"
-	"github.com/m-j-majevsky/url-shortener/internal/mocks"
 	"github.com/m-j-majevsky/url-shortener/internal/model"
 	"github.com/m-j-majevsky/url-shortener/internal/repository"
 )
@@ -289,33 +288,21 @@ func (s *ShortenerSuite) TestBatchStore_Got_Conflicts_On_OriginalURL() {
 // PingDB
 
 func (s *ShortenerSuite) TestPingDB() {
-	rst := new(mocks.MockPgStorage)
+	rst := new(repository.MockPgStorage)
 	s.createShotnerInstance(rst)
 
 	ctx := s.T().Context()
 
 	s.T().Run("успешный ping", func(t *testing.T) {
 		rst.On("Ping", ctx).Return(nil).Once()
-		s.NoError(s.svc.PingDB(ctx))
+		s.NoError(s.svc.Ping(ctx))
 		rst.AssertExpectations(s.T())
 	})
 
 	s.T().Run("ошибка при ping'е", func(t *testing.T) {
 		pfErr := fmt.Errorf("connection timeout")
 		rst.On("Ping", ctx).Return(pfErr).Once()
-		s.ErrorIs(s.svc.PingDB(ctx), pfErr)
+		s.ErrorIs(s.svc.Ping(ctx), pfErr)
 		rst.AssertExpectations(s.T())
 	})
-}
-
-// WithDB
-
-func (s *ShortenerSuite) TestWithDB_Positive() {
-	s.createShotnerInstance(new(mocks.MockPgStorage))
-	s.True(s.svc.WithDB())
-}
-
-func (s *ShortenerSuite) TestWithDB_Negative() {
-	s.createShotnerInstance(s.storage)
-	s.False(s.svc.WithDB())
 }

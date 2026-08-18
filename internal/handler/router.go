@@ -17,6 +17,7 @@ import (
 	"github.com/m-j-majevsky/url-shortener/internal/logger"
 	"github.com/m-j-majevsky/url-shortener/internal/model"
 	"github.com/m-j-majevsky/url-shortener/internal/repository"
+	"github.com/m-j-majevsky/url-shortener/internal/service"
 )
 
 const (
@@ -33,15 +34,21 @@ type URLShortener interface {
 	GenerateAndStore(ctx context.Context, longURL string) (string, error)
 	BatchStore(ctx context.Context, batch model.BatchShortenReq) (model.BatchShortenRes, error)
 	Resolve(ctx context.Context, token string) (string, error)
-	WithDB() bool
-	PingDB(ctx context.Context) error
+}
+
+type ServiceConfigReader interface {
+	GetConfig() service.ShortenerConfig
+}
+
+type StoragePinger interface {
+	Ping(ctx context.Context) error
 }
 
 type Router struct {
-	mux               *chi.Mux
-	service           URLShortener
-	withRemoteStorage bool
-	baseURL           string
+	mux     *chi.Mux
+	service URLShortener
+	pinger  StoragePinger
+	baseURL string
 }
 
 func (rt Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -64,10 +71,10 @@ func NewRouter(svc URLShortener, targetBaseURL string) Router {
 	cr := chi.NewRouter()
 
 	mux := Router{
-		mux:               cr,
-		service:           svc,
-		withRemoteStorage: svc.WithDB(),
-		baseURL:           targetBaseURL,
+		mux:     cr,
+		service: svc,
+		pinger:  getStoragePinger(svc),
+		baseURL: targetBaseURL,
 	}
 
 	cr.Group(func(cr chi.Router) {
@@ -93,7 +100,7 @@ func NewRouter(svc URLShortener, targetBaseURL string) Router {
 
 	cr.Get("/{token}", mux.resolveShortURL)
 
-	if mux.withRemoteStorage {
+	if mux.pinger != nil {
 		logger.Log.Info("service supports request for " + pingPath)
 		cr.Get(pingPath, mux.pingDB)
 	} else {
@@ -108,9 +115,24 @@ func NewRouter(svc URLShortener, targetBaseURL string) Router {
 	return mux
 }
 
+func getStoragePinger(svc URLShortener) StoragePinger {
+	scr, ok := svc.(ServiceConfigReader)
+	if !ok {
+		return nil
+	}
+	if _, ok := scr.GetConfig().Storage.(StoragePinger); !ok {
+		return nil
+	}
+	sp, ok := svc.(StoragePinger)
+	if !ok {
+		return nil
+	}
+	return sp
+}
+
 func (rt *Router) pingDB(w http.ResponseWriter, r *http.Request) {
-	if !rt.withRemoteStorage {
-		logger.Log.Error("service doesn't support method PingDB")
+	if rt.pinger == nil {
+		logger.Log.Error("ping storage is not supported")
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -118,7 +140,7 @@ func (rt *Router) pingDB(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), procTimeout)
 	defer cancel()
 
-	err := rt.service.PingDB(ctx)
+	err := rt.pinger.Ping(ctx)
 	if err != nil {
 		logger.Log.Error("database ping failed", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)

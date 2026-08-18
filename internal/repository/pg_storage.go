@@ -11,47 +11,36 @@ import (
 )
 
 type (
-	// Идея введения следующих интерфейсов в этом пакете подсмотрена у Рафаэля Мустафина:
+	// Идея введения интерфейса dbtx в этом пакете подсмотрена у Рафаэля Мустафина:
 	// https://github.com/Bazys/practicum-webinars/blob/master/videos/repository.go#L20 и далее
-
-	// PgStorage - контракт слоя хранения.
 	//
-	// Как указывает Рафаэль, _интерфейс_ здесь вводится по следующим причинам:
-	//  1. Бизнес-логику (handler) можно тестировать на моке интерфейса, без БД.
-	//  2. Можно подменить реализацию (например, in-memory кэш для тестов).
-	PgStorage interface {
-		Store(ctx context.Context, token string, longURL string) error
-		Resolve(ctx context.Context, token string) (string, error)
-		Ping(ctx context.Context) error
-		BatchStore(ctx context.Context, batch Batch) (Batch, error)
-		DeleteByTokens(ctx context.Context, tokens []string) error
-	}
-
-	// DBTX - минимальный набор методов для работы с БД.
+	// dbtx - минимальный набор методов для работы с БД.
 	//
 	// Его реализуют _и_ настоящий пул *pgxpool.Pool, _и_ мок pgxmock.PgxConnIface,
 	// поэтому репозиторий легко покрывать unit-тестами без живой БД.
 	//
 	// Важно: возвращаются типы из пакета pgx (pgx.Rows, pgx.Row),
 	// а не специфичные для пула - это и позволяет подменять реализацию.
-	DBTX interface {
+	//
+	// Интерфейс сделан приватным для пакета repository, так как он не нужен снаружи пакета
+	// и, как сказано выше, введен для упрощения кода хранилища и тестов.
+	//
+	// Сделав интерфейс приватным мы также избегаем просачивания наружу пакета
+	// внутренних типов pgx и pgconn.
+	dbtx interface {
 		QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 		Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 		Ping(ctx context.Context) error
 		Begin(ctx context.Context) (pgx.Tx, error)
 	}
 
-	// pgStorage - реализация PgStorage поверх pgxpool.
 	pgStorage struct {
-		db DBTX
+		db dbtx
 	}
 )
 
-// Убеждаемся на этапе компиляции, что *pgStorage реализует интерфейс PgStorage.
-var _ PgStorage = (*pgStorage)(nil)
-
-// NewPgStorage принимает *pgxpool.Pool, который реализует DBTX.
-func NewPgStorage(db DBTX) PgStorage {
+// NewPgStorage принимает *pgxpool.Pool, который реализует dbtx.
+func NewPgStorage(db dbtx) *pgStorage {
 	return &pgStorage{
 		db: db,
 	}
@@ -75,7 +64,7 @@ func (s *pgStorage) Store(ctx context.Context, token string, longURL string) err
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			// Сработало ограничение уникальности
 			if strings.ToLower(pgErr.ConstraintName) == "shorten_urls_token_key" {
-				return fmt.Errorf("%w", NewErrTokenTaken(token))
+				return NewErrTokenTaken(token)
 			}
 
 			// Если вдруг конфликт по другому ограничению, которое мы не ожидали
@@ -90,7 +79,7 @@ func (s *pgStorage) Store(ctx context.Context, token string, longURL string) err
 	//
 	// Признаком ON CONFLICT считаем отличие returnedToken от item.Token
 	if token != returnedToken {
-		return fmt.Errorf("%w", NewErrOriginalURLExists(returnedToken, longURL))
+		return NewErrOriginalURLExists(returnedToken, longURL)
 	}
 
 	return nil
@@ -105,7 +94,7 @@ func (s *pgStorage) Resolve(ctx context.Context, token string) (string, error) {
 	err := s.db.QueryRow(ctx, q, token).Scan(&url)
 
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", fmt.Errorf("%w", NewErrTokenNotFound(token))
+		return "", NewErrTokenNotFound(token)
 	}
 
 	if err != nil {
@@ -180,7 +169,7 @@ func (s *pgStorage) BatchStore(ctx context.Context, batchReq Batch) (Batch, erro
 		if item.Token != returnedToken {
 			// Такую запись в батче помечаем для дальнейшей обработки в вызывающем коде
 			item.ConflictedURL = true
-			item.TokenOnConflictedURL = returnedToken
+			item.Token = returnedToken
 		}
 	} // for
 

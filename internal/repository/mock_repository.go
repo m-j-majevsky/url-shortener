@@ -1,9 +1,8 @@
-package mocks
+package repository
 
 import (
 	"context"
 
-	"github.com/m-j-majevsky/url-shortener/internal/repository"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -32,10 +31,10 @@ func (m *MockPgStorage) Resolve(ctx context.Context, token string) (string, erro
 	return url, err
 }
 
-func (m *MockPgStorage) BatchStore(ctx context.Context, batch repository.Batch) (repository.Batch, error) {
+func (m *MockPgStorage) BatchStore(ctx context.Context, batch Batch) (Batch, error) {
 	args := m.Called(ctx, batch)
 
-	return args.Get(0).(repository.Batch), args.Error(0)
+	return args.Get(0).(Batch), args.Error(0)
 }
 
 func (m *MockPgStorage) DeleteByTokens(ctx context.Context, tokens []string) error {
