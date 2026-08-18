@@ -14,11 +14,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newMockPgStorage(t *testing.T) (PgStorage, pgxmock.PgxConnIface) {
+func newMockPgStorage(t *testing.T) (*pgStorage, pgxmock.PgxConnIface) {
 	t.Helper()
 	mock, err := pgxmock.NewConn(pgxmock.QueryMatcherOption(pgxmock.QueryMatcherRegexp))
 	require.NoError(t, err)
-	// PgxConnIface реализует интерфейс DBTX (QueryRow/Exec/Ping), поэтому мок
+	// PgxConnIface реализует интерфейс dbtx (QueryRow/Exec/Ping), поэтому мок
 	// можно передать прямо в конструктор репозитория - никакой БД не нужно.
 	return NewPgStorage(mock), mock
 }
@@ -279,7 +279,7 @@ func TestBatchStore_ErrOriginalURLExists(t *testing.T) {
 	require.ErrorAs(t, err, &eoue)
 	assert.True(t, itOut.ConflictedURL)
 	assert.Equal(t, existingToken, eoue.StoredToken)
-	assert.Equal(t, existingToken, itOut.TokenOnConflictedURL)
+	assert.Equal(t, existingToken, itOut.Token)
 	// Корректность остальных полей
 	assert.Equal(t, itIn.CorrelationID, itOut.CorrelationID)
 	assert.Equal(t, itIn.OriginalURL, itOut.OriginalURL)
@@ -292,7 +292,6 @@ func TestBatchStore_ErrOriginalURLExists(t *testing.T) {
 	assert.Equal(t, itIn.Token, itOut.Token)
 	assert.False(t, itOut.ConflictedToken)
 	assert.False(t, itOut.ConflictedURL)
-	assert.Empty(t, itOut.TokenOnConflictedURL)
 
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
@@ -344,7 +343,6 @@ func TestBatchStore_ConflictToken(t *testing.T) {
 	assert.Equal(t, itIn.CorrelationID, itOut.CorrelationID)
 	assert.Equal(t, itIn.OriginalURL, itOut.OriginalURL)
 	assert.False(t, itOut.ConflictedURL)
-	assert.Empty(t, itOut.TokenOnConflictedURL)
 
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
@@ -410,12 +408,11 @@ func TestBatchStore_MixedScenario(t *testing.T) {
 	require.ErrorAs(t, err, &eoue)
 	assert.Equal(t, itIn.OriginalURL, eoue.URL)
 	assert.Equal(t, existingToken, eoue.StoredToken)
-	assert.Equal(t, existingToken, itOut.TokenOnConflictedURL)
+	assert.Equal(t, existingToken, itOut.Token)
 	assert.True(t, itOut.ConflictedURL)
 	// Корректность остальных полей
 	assert.Equal(t, itIn.CorrelationID, itOut.CorrelationID)
 	assert.Equal(t, itIn.OriginalURL, itOut.OriginalURL)
-	assert.Equal(t, itIn.Token, itOut.Token)
 	assert.False(t, itOut.ConflictedToken)
 
 	// Элемент 2: конфликт токена
@@ -430,7 +427,6 @@ func TestBatchStore_MixedScenario(t *testing.T) {
 	assert.Equal(t, itIn.CorrelationID, itOut.CorrelationID)
 	assert.Equal(t, itIn.OriginalURL, itOut.OriginalURL)
 	assert.False(t, itOut.ConflictedURL)
-	assert.Empty(t, itOut.TokenOnConflictedURL)
 
 	assert.NoError(t, mock.ExpectationsWereMet())
 }

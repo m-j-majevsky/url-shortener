@@ -169,7 +169,6 @@ func (suite *MapBasedDBTestSuite) checkResItemAndCompare(reqIt BatchItem, resIt 
 	suite.False(resIt.ConflictedToken)
 
 	suite.False(resIt.ConflictedURL)
-	suite.Empty(resIt.TokenOnConflictedURL)
 
 	suite.Equal(reqIt.Token, resIt.Token)
 	suite.Equal(reqIt.OriginalURL, resIt.OriginalURL)
@@ -214,7 +213,6 @@ func (suite *MapBasedDBTestSuite) TestBatchStore_ErrTokenTaken() {
 
 	// Прочие поля / флаги проблемного элемента не выставлены в ошибки
 	suite.False(resIt.ConflictedURL)
-	suite.Empty(resIt.TokenOnConflictedURL)
 	suite.Equal(reqIt.Token, resIt.Token)
 	suite.Equal(reqIt.OriginalURL, resIt.OriginalURL)
 	suite.Equal(reqIt.CorrelationID, resIt.CorrelationID)
@@ -255,11 +253,10 @@ func (suite *MapBasedDBTestSuite) TestBatchStore_ErrOriginalURLExists() {
 	// Поля / флаги ошибки ErrOriginalURLExists выставлены корректно
 	suite.True(resIt.ConflictedURL)
 	suite.Equal(yandexToken, eoue.StoredToken)
-	suite.Equal(yandexToken, resIt.TokenOnConflictedURL)
+	suite.Equal(yandexToken, resIt.Token)
 
 	// Прочие поля / флаги проблемного элемента не выставлены в ошибки
 	suite.False(resIt.ConflictedToken)
-	suite.Equal(reqIt.Token, resIt.Token)
 	suite.Equal(reqIt.OriginalURL, resIt.OriginalURL)
 	suite.Equal(reqIt.CorrelationID, resIt.CorrelationID)
 }
@@ -293,7 +290,7 @@ func (suite *MapBasedDBTestSuite) TestBatchStore_ErrOriginalURLExists_While_Toke
 	// Поля / флаги ошибки ErrOriginalURLExists выставлены корректно
 	suite.True(resIt.ConflictedURL)
 	suite.Equal(yandexToken, eoue.StoredToken)
-	suite.Equal(yandexToken, resIt.TokenOnConflictedURL)
+	suite.Equal(yandexToken, resIt.Token)
 
 	// Прочие поля / флаги проблемного элемента не выставлены в ошибки
 	// В частности, отсутствуют флаги-признаки ErrTokenTaken

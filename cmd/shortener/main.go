@@ -37,7 +37,7 @@ func main() {
 	var saveStateMode bool
 	backgroundCtx := context.Background()
 
-	if len(cfg.DatabaseDSN) > 0 {
+	if cfg.DatabaseDSN != "" {
 		pool, err := createPool(backgroundCtx, cfg.DatabaseDSN)
 		if err != nil {
 			logger.Log.Fatal(err.Error(), zap.String("event", "creating database connection pool"))
@@ -86,7 +86,7 @@ func main() {
 	// Запускаем фоном обработчик сигналов SIGINT/SIGTERM
 	go handleShutdownSignals(cfg, cancel, server, sigChan)
 
-	if saveStateMode {
+	if saveStateMode && cfg.FileStoragePath != "" {
 		// Режим сохранения локального хранилища в файл
 		defer saveStateDeferred(localStorage, cfg.FileStoragePath)
 	}
