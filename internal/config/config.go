@@ -13,6 +13,7 @@ type ApplicationConfig struct {
 	ServerRunAddress  string
 	TargetBaseURL     string
 	FileStoragePath   string
+	DatabaseDSN       string
 	SaveStateInterval time.Duration // интервал для таймера на сохранение данных в FileStoragePath
 	ShutdownTimeout   time.Duration // время на graceful shutdown
 	ServiceConfig     service.ShortenerConfig
@@ -37,6 +38,10 @@ func LoadApplicationConfig() (ApplicationConfig, error) {
 		appConfig.TargetBaseURL = envBaseUrl
 	}
 
+	if envDatabaseDSN := os.Getenv("DATABASE_DSN"); envDatabaseDSN != "" {
+		appConfig.DatabaseDSN = envDatabaseDSN
+	}
+
 	if envFileStoragePath := os.Getenv("FILE_STORAGE_PATH"); envFileStoragePath != "" {
 		appConfig.FileStoragePath = envFileStoragePath
 	}
@@ -59,7 +64,8 @@ func parseFlags(cfg *ApplicationConfig) {
 	flag.StringVar(&cfg.ServerRunAddress, "a", ":8080", "address and port to run server")
 	flag.StringVar(&cfg.TargetBaseURL, "b", "http://localhost:8080", "target URL base path")
 	flag.StringVar(&cfg.LogLevel, "l", "info", "log level")
-	flag.StringVar(&cfg.FileStoragePath, "f", "storage_state.json", "path to storage saved state")
+	flag.StringVar(&cfg.DatabaseDSN, "d", "", "data source name")
+	flag.StringVar(&cfg.FileStoragePath, "f", "", "path to storage saved state")
 	flag.DurationVar(&cfg.SaveStateInterval, "s", time.Second*time.Duration(1), "save state interval")
 	flag.Parse()
 }

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -10,13 +11,19 @@ import (
 	"github.com/m-j-majevsky/url-shortener/internal/repository"
 )
 
-type URLStorage interface {
-	Store(token string, longURL model.URL) error
-	Resolve(token string) (model.URL, bool)
+type BasicStorage interface {
+	Store(ctx context.Context, token string, longURL string) error
+	Resolve(ctx context.Context, token string) (string, error)
+	BatchStore(ctx context.Context, batch repository.Batch) (repository.Batch, error)
+	DeleteByTokens(ctx context.Context, tokens []string) error
+}
+
+type StoragePinger interface {
+	Ping(ctx context.Context) error
 }
 
 type ShortenerConfig struct {
-	Storage URLStorage
+	Storage BasicStorage
 
 	RandProv crypto.RandomByteProvider // источник случайных данных для генератора токенов
 
@@ -72,51 +79,240 @@ func NewShortener(cfg ShortenerConfig) (*Shortener, error) {
 	return &Shortener{config: cfg}, nil
 }
 
-func (s *Shortener) GenerateToken() (string, error) {
+// generateTokens генериурет num различных base62-токенов,
+// длина каждого из которых лежит в отрезке
+// [config.MinTokenLength, config.MахTokenLength]
+func (s *Shortener) generateTokens(num int) ([]string, error) {
 	cfg := s.config
-
-	for attempt := 0; attempt < cfg.MaxGeneratingAttempts; attempt++ {
+	tokens := make(map[string]struct{}, num)
+	for attempt := 0; attempt < cfg.MaxGeneratingAttempts*num; attempt++ {
 		bytes, err := crypto.GenerateRandomBytes(s.config.RandProv, cfg.BytesToGenerate)
 		if err != nil {
-			return "", err
+			return []string{}, fmt.Errorf("ошибка генерации случайного токена: %w", err)
 		}
 
-		token := encoding.EncodeToBase62(bytes)
+		tok := encoding.EncodeToBase62(bytes)
+		if len(tok) >= cfg.MinTokenLength && len(tok) <= cfg.MaxTokenLength {
+			// Попали в допустимый диапазон длины очередного сгенерированного токена
 
-		if len(token) >= cfg.MinTokenLength && len(token) <= cfg.MaxTokenLength {
-			return token, nil
+			if _, found := tokens[tok]; found {
+				// Такой токен уже есть, попытаемся еще раз
+				continue
+			}
+
+			tokens[tok] = struct{}{}
+
+			if len(tokens) == num {
+				// Успешно сгенерировали num различных токенов
+				break
+			}
 		}
 	}
-	// Не удалось уложиться в заданный диапазон длин
-	return "", fmt.Errorf("ошибка генерации токена с длиной в диапазоне [%d,%d] за %d попыток",
-		cfg.MinTokenLength, cfg.MaxTokenLength, cfg.MaxGeneratingAttempts)
+
+	if len(tokens) < num {
+		return []string{}, fmt.Errorf("ошибка при генерации %d различных токенов с длиной в диапазоне [%d,%d] за %d попыток",
+			num, cfg.MinTokenLength, cfg.MaxTokenLength, cfg.MaxGeneratingAttempts)
+	}
+
+	result := make([]string, 0, num)
+	for tok := range tokens {
+		result = append(result, tok)
+	}
+	return result, nil
 }
 
-func (s *Shortener) GenerateAndStore(longURL string) (string, error) {
+func (s *Shortener) GenerateAndStore(ctx context.Context, longURL string) (string, error) {
 	for i := 0; i < s.config.MaxStoringAttempts; i++ {
-		token, err := s.GenerateToken()
+		tokens, err := s.generateTokens(1)
 		if err != nil {
-			// Ошибка библиотечного генератора,
+			// Ошибка библиотечного генератора, контекста,
 			// или не удалось выполнить ограничения на токен из конфига
+			//
+			// Ошибку дополнительно не оборачиваю, т.к. все обертки сделаны в GenerateToken
 			return "", err
 		}
 
-		err = s.config.Storage.Store(token, model.NewURL(longURL))
+		token := tokens[0]
+		err = s.config.Storage.Store(ctx, token, longURL)
+
 		if err == nil {
 			// Успех
 			return token, nil
 		}
+
+		var eoue *repository.ErrOriginalURLExists
+		if errors.As(err, &eoue) {
+			// longURL уже был в хранилище.
+			// Возвращаем относящийся к нему сохраненный ранее токен
+			// и признак ошибки для обработки в раутере
+			return eoue.StoredToken, eoue
+		}
+
 		var ett *repository.ErrTokenTaken
 		if !errors.As(err, &ett) {
-			// Прочие возможные ошибки репозитория, отличные от "токен занят"
-			return "", err
+			// Прочие возможные ошибки репозитория или контекста,
+			// отличные от "токен занят", отдаем наверх
+			return "", fmt.Errorf("ошибка сохранения данных: %w", err)
 		}
 	}
 
 	return "", fmt.Errorf("не удалось сохранить URL за %d попыток", s.config.MaxStoringAttempts)
 }
 
-func (s *Shortener) Resolve(token string) (string, bool) {
-	url, ok := s.config.Storage.Resolve(token)
-	return url.String(), ok
+func (s *Shortener) Resolve(ctx context.Context, token string) (string, error) {
+	url, err := s.config.Storage.Resolve(ctx, token)
+	if err != nil {
+		return "", fmt.Errorf("ошибка хранилища: %w", err)
+	}
+	return url, nil
+}
+
+func (s *Shortener) Ping(ctx context.Context) error {
+	swp, ok := s.config.Storage.(StoragePinger)
+	if !ok {
+		return fmt.Errorf("хранилище не поддерживает метод Ping")
+	}
+	return swp.Ping(ctx)
+}
+
+func (s *Shortener) GetConfig() ShortenerConfig {
+	return s.config
+}
+
+func (s *Shortener) BatchStore(ctx context.Context, req model.BatchShortenReq) (model.BatchShortenRes, error) {
+	reqLen := len(req)
+	if reqLen == 0 {
+		return model.BatchShortenRes{}, nil
+	}
+
+	// batch вводится для внутреннего представления
+	// и обработки содержимого входного пакета в методах сервиса и хранилища
+	batch := repository.NewBatch(req)
+	// В stored накапливаем успешно сохраненные в БД элеметны batch
+	stored := make(repository.Batch, 0, reqLen)
+
+	// Отсчет попыток сохранения до успешной или до достижения лимита попыток
+	for nAttempts := 0; nAttempts < s.config.MaxStoringAttempts; nAttempts++ {
+		tokens, err := s.generateTokens(len(batch))
+		if err != nil {
+			// Ошибки механизма генерации токенов
+			// err дополнительно не оборачиваю, т.к. все обертки сделаны в generateTokens
+			return model.BatchShortenRes{}, s.restoreWithError(ctx, stored, err)
+		}
+
+		assignTokensToBatchItems(batch, tokens)
+
+		storageRes, err := s.config.Storage.BatchStore(ctx, batch)
+		if err == nil {
+			// Полный успех, можно переходить к оформлению ответа
+			stored = append(stored, storageRes...)
+			break
+		}
+
+		// Далее до конца блока выполняется err != nil,
+		// поэтому обработка зависит от специфики ошибки
+
+		// Собираем успешно записаные или имевшие конфликт по URL запросы
+		stored = appendStoredItems(stored, storageRes)
+
+		if len(stored) == reqLen {
+			// Проблемных элементов нет; переходим к оформлению ответа
+			break
+		}
+
+		var ett *repository.ErrTokenTaken
+		if errors.As(err, &ett) {
+			// Есть занятыe токены для некоторых записей, возвращенных в storageRes;
+			// для них предпримем новую попытку генерации токенов и сохранения,
+			// предварительно подготовив данные на итерацию
+			batch = batchForNextAttempt(storageRes)
+			continue
+		}
+
+		// Прочие ошибки от БД отдаем наверх, предварительно предриняв попытку зачистить успешно закоммиченные данные
+		return model.BatchShortenRes{}, s.restoreWithError(ctx, stored, fmt.Errorf("ошибка сохранения пакета: %w", err))
+	} // for on nAttempts
+
+	return buildBatchShortenRes(stored), nil
+}
+
+// assignTokensToBatch распихивает по пакету req токены из tokens.
+//
+// Модифицирует первый агрумент req.
+//
+// Вызывающий код ответственен за то, чтобы в слайсе tokens было
+// достаточно токенов для всех элементов пакета batch
+func assignTokensToBatchItems(req repository.Batch, tokens []string) {
+	for i := range req {
+		req[i].Token = tokens[i]
+	}
+}
+
+// appendStoredItems пополняет коллекцию stored теми
+// полученными от слоя хранилища элементами storageRes,
+// которые или успешно добавлены в хранилище, или уже присутствовали в нём
+func appendStoredItems(stored, storageRes repository.Batch) repository.Batch {
+	for _, it := range storageRes {
+		if it.ConflictedURL || !it.ConflictedToken {
+			// добавляем в список успешно обработанных (stored)
+			stored = append(stored, it)
+		}
+	}
+	return stored
+}
+
+// batchForNextAttempt формирует на основе ответа от хранилища
+// пакет запросов на сохранение для очередной попытки
+// генерации токенов и сохранения данных.
+//
+// В формируемый пакет попадают лишь те записи, при сохранении которых
+// единственной ошибкой оказался конфликт токена.
+func batchForNextAttempt(storageRes repository.Batch) repository.Batch {
+	batch := make(repository.Batch, 0, len(storageRes))
+	for _, it := range storageRes {
+		if it.ConflictedToken && !it.ConflictedURL {
+			batchItem := repository.BatchItem{
+				CorrelationID: it.CorrelationID,
+				OriginalURL:   it.OriginalURL,
+			}
+			batch = append(batch, batchItem)
+		}
+	}
+	return batch
+}
+
+// buildBatchShortenRes преобразует ответ от слоя данных к сервисному слою
+func buildBatchShortenRes(batch repository.Batch) model.BatchShortenRes {
+	result := make(model.BatchShortenRes, 0, len(batch))
+	for i := range batch {
+		it := &batch[i]
+		result = append(result, model.BatchShortenResItem{
+			CorrelationID: it.CorrelationID,
+			ShortURL:      it.Token,
+			ConflictedURL: it.ConflictedURL,
+		})
+	}
+	return result
+}
+
+// restoreWithError пробует удалить данные из батча toRollback из хранилища.
+// В случае успешного удаления возвращает errToReturn.
+// В случае ошибки отката, вовзращает errors.Join ошибки errToReturn и ошибки,
+// не позволившей выполнить откат.
+func (s *Shortener) restoreWithError(ctx context.Context, toRollback repository.Batch, errToReturn error) error {
+	errs := []error{errToReturn}
+	if len(toRollback) > 0 {
+		// Пробуем откатиться, раз что-то уже закоммичено в БД
+		tokens := make([]string, 0, len(toRollback))
+		for _, it := range toRollback {
+			tokens = append(tokens, it.Token)
+		}
+
+		rollbackErr := s.config.Storage.DeleteByTokens(ctx, tokens)
+		if rollbackErr != nil {
+			// Серьезная ошибка
+			errs = append(errs, rollbackErr)
+		}
+	}
+	return errors.Join(errs...)
 }

@@ -1,10 +1,13 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	valid "github.com/asaskevich/govalidator/v12"
 	"github.com/go-chi/chi/v5"
@@ -13,22 +16,38 @@ import (
 	enc "github.com/m-j-majevsky/url-shortener/internal/encoding"
 	"github.com/m-j-majevsky/url-shortener/internal/logger"
 	"github.com/m-j-majevsky/url-shortener/internal/model"
+	"github.com/m-j-majevsky/url-shortener/internal/repository"
+	"github.com/m-j-majevsky/url-shortener/internal/service"
 )
 
 const (
 	ContentType = "Content-Type"
 	AppJson     = "application/json"
 	TextPlain   = "text/plain"
+
+	pingPath = "/ping"
+
+	procTimeout = 5 * time.Second
 )
 
 type URLShortener interface {
-	GenerateAndStore(longURL string) (string, error)
-	Resolve(token string) (string, bool)
+	GenerateAndStore(ctx context.Context, longURL string) (string, error)
+	BatchStore(ctx context.Context, batch model.BatchShortenReq) (model.BatchShortenRes, error)
+	Resolve(ctx context.Context, token string) (string, error)
+}
+
+type ServiceConfigReader interface {
+	GetConfig() service.ShortenerConfig
+}
+
+type StoragePinger interface {
+	Ping(ctx context.Context) error
 }
 
 type Router struct {
 	mux     *chi.Mux
 	service URLShortener
+	pinger  StoragePinger
 	baseURL string
 }
 
@@ -36,12 +55,25 @@ func (rt Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rt.mux.ServeHTTP(w, r)
 }
 
+var (
+	badRequest = func(message string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, message, http.StatusBadRequest)
+		}
+	}
+
+	badRequestWithWrongPath = badRequest("недопустимый путь в URL")
+
+	badRequestWithMethodNotAllowed = badRequest("недопустимый метод")
+)
+
 func NewRouter(svc URLShortener, targetBaseURL string) Router {
 	cr := chi.NewRouter()
 
 	mux := Router{
 		mux:     cr,
 		service: svc,
+		pinger:  getStoragePinger(svc),
 		baseURL: targetBaseURL,
 	}
 
@@ -56,20 +88,66 @@ func NewRouter(svc URLShortener, targetBaseURL string) Router {
 		cr.Use(func(next http.Handler) http.Handler {
 			return responseContentTypeMiddleware(next, AppJson)
 		})
+		cr.Post("/api/shorten/batch", mux.shortenBatch)
+	})
+
+	cr.Group(func(cr chi.Router) {
+		cr.Use(func(next http.Handler) http.Handler {
+			return responseContentTypeMiddleware(next, AppJson)
+		})
 		cr.Post("/api/shorten", mux.shortenLongURLForJson)
 	})
 
 	cr.Get("/{token}", mux.resolveShortURL)
 
-	cr.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "недопустимый путь в URL", http.StatusBadRequest)
-	})
+	if mux.pinger != nil {
+		logger.Log.Info("service supports request for " + pingPath)
+		cr.Get(pingPath, mux.pingDB)
+	} else {
+		logger.Log.Info("service doesn't support request for " + pingPath)
+		cr.Get(pingPath, badRequestWithWrongPath)
+	}
 
-	cr.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "недопустимый метод", http.StatusBadRequest)
-	})
+	cr.NotFound(badRequestWithWrongPath)
+
+	cr.MethodNotAllowed(badRequestWithMethodNotAllowed)
 
 	return mux
+}
+
+func getStoragePinger(svc URLShortener) StoragePinger {
+	scr, ok := svc.(ServiceConfigReader)
+	if !ok {
+		return nil
+	}
+	if _, ok := scr.GetConfig().Storage.(StoragePinger); !ok {
+		return nil
+	}
+	sp, ok := svc.(StoragePinger)
+	if !ok {
+		return nil
+	}
+	return sp
+}
+
+func (rt *Router) pingDB(w http.ResponseWriter, r *http.Request) {
+	if rt.pinger == nil {
+		logger.Log.Error("ping storage is not supported")
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), procTimeout)
+	defer cancel()
+
+	err := rt.pinger.Ping(ctx)
+	if err != nil {
+		logger.Log.Error("database ping failed", zap.Error(err))
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 func (rt *Router) resolveShortURL(w http.ResponseWriter, r *http.Request) {
@@ -80,14 +158,25 @@ func (rt *Router) resolveShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	url, found := rt.service.Resolve(token)
-	if !found {
-		logger.Log.Debug("cannot find token " + url)
+	ctx, cancel := context.WithTimeout(r.Context(), procTimeout)
+	defer cancel()
+
+	url, err := rt.service.Resolve(ctx, token)
+
+	if err == nil {
+		http.Redirect(w, r, url, http.StatusTemporaryRedirect)
+		return
+	}
+
+	var etnf *repository.ErrTokenNotFound
+	if errors.As(err, &etnf) {
+		logger.Log.Debug(fmt.Sprintf("token %s not found", token), zap.Error(err))
 		http.Error(w, "URL не зарегистрирован", http.StatusBadRequest)
 		return
 	}
 
-	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
+	logger.Log.Debug("error resolving token "+token, zap.Error(err))
+	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 }
 
 func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) {
@@ -105,14 +194,26 @@ func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	token, shortenerErr := rt.service.GenerateAndStore(string(bodyBytes))
+	ctx, cancel := context.WithTimeout(r.Context(), procTimeout)
+	defer cancel()
+
+	resCode := http.StatusCreated
+	token, shortenerErr := rt.service.GenerateAndStore(ctx, string(bodyBytes))
 	if shortenerErr != nil {
-		logger.Log.Debug("error providing short URL", zap.Error(shortenerErr))
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
+		var eoue *repository.ErrOriginalURLExists
+		if errors.As(shortenerErr, &eoue) {
+			// В этом случае данные для пользователя есть,
+			// но необходимо сменить статус ответа!
+			resCode = http.StatusConflict
+		} else {
+			// Прочие конфликты и ошибки считаются внутренней проблемой сервиса
+			logger.Log.Debug("error providing short URL", zap.Error(shortenerErr))
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
 	}
 
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(resCode)
 	io.WriteString(w, fmt.Sprintf("%s/%s", rt.baseURL, token))
 }
 
@@ -123,7 +224,7 @@ func (rt *Router) shortenLongURLForJson(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var req model.PostApiShortenReq
+	var req model.ShortenReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		logger.Log.Debug("cannot decode request JSON body", zap.Error(err))
 		http.Error(w, "ожидается валидный JSON объект в теле запроса", http.StatusBadRequest)
@@ -135,20 +236,94 @@ func (rt *Router) shortenLongURLForJson(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	token, shortenerErr := rt.service.GenerateAndStore(req.URL)
+	ctx, cancel := context.WithTimeout(r.Context(), procTimeout)
+	defer cancel()
+
+	resCode := http.StatusCreated
+	token, shortenerErr := rt.service.GenerateAndStore(ctx, req.URL)
 	if shortenerErr != nil {
-		logger.Log.Debug("error providing short URL", zap.Error(shortenerErr))
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
+		var eoue *repository.ErrOriginalURLExists
+		if errors.As(shortenerErr, &eoue) {
+			// В этом случае данные для пользователя есть,
+			// но необходимо сменить статус ответа!
+			resCode = http.StatusConflict
+		} else {
+			// Прочие конфликты и ошибки считаются внутренней проблемой сервиса
+			logger.Log.Debug("error providing short URL", zap.Error(shortenerErr))
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	resp := model.PostApiShortenRes{
+	w.WriteHeader(resCode)
+	resp := model.ShortenRes{
 		Result: fmt.Sprintf("%s/%s", rt.baseURL, token),
 	}
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		logger.Log.Debug("error encoding response", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
+	}
+}
+
+func (rt *Router) shortenBatch(w http.ResponseWriter, r *http.Request) {
+	if rct := r.Header.Get(ContentType); rct != AppJson {
+		logger.Log.Debug("wrong request Content-Type: " + rct)
+		http.Error(w, "ожидается запрос с заголовком Content-Type: application/json", http.StatusBadRequest)
+		return
+	}
+
+	var batchReq model.BatchShortenReq
+	if err := json.NewDecoder(r.Body).Decode(&batchReq); err != nil {
+		logger.Log.Debug("cannot decode request JSON body", zap.Error(err))
+		http.Error(w, "ожидается валидный JSON объект в теле запроса", http.StatusBadRequest)
+		return
+	}
+	if err := validateBatchReq(batchReq); err != nil {
+		logger.Log.Debug("request validation error", zap.Error(err))
+		http.Error(w, `в теле запроса ожидается JSON c массивом объектов, имеющих ключи correlation_id (строка) и original_url (валидный URL)`, http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), procTimeout)
+	defer cancel()
+
+	batchRes, err := rt.service.BatchStore(ctx, batchReq)
+	if err != nil {
+		logger.Log.Debug("error providing batch of short URLs", zap.Error(err))
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	setBaseForShortenURL(rt.baseURL, batchRes)
+	w.WriteHeader(getResCode(batchRes))
+	if err := json.NewEncoder(w).Encode(batchRes); err != nil {
+		logger.Log.Debug("error encoding response", zap.Error(err))
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+}
+
+func getResCode(batchRes model.BatchShortenRes) int {
+	for _, it := range batchRes {
+		if it.ConflictedURL {
+			return http.StatusConflict
+		}
+	}
+	return http.StatusCreated
+}
+
+func validateBatchReq(batch model.BatchShortenReq) error {
+	for _, item := range batch {
+		if ok, err := valid.ValidateStruct(item); err != nil || !ok {
+			return err
+		}
+	}
+	return nil
+}
+
+func setBaseForShortenURL(baseURL string, batch model.BatchShortenRes) {
+	for i := range batch {
+		batch[i].ShortURL = fmt.Sprintf("%s/%s", baseURL, batch[i].ShortURL)
 	}
 }
