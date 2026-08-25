@@ -98,7 +98,10 @@ func TestPgStorage_Integration_CRUD(t *testing.T) {
 
 	require.NoError(t, storage.Ping(ctx))
 
-	require.NoError(t, storage.Store(ctx, tok, url))
+	userID, err := storage.CreateUser(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, storage.Store(ctx, tok, url, userID))
 
 	res, err := storage.Resolve(ctx, tok)
 	require.NoError(t, err)
@@ -118,9 +121,12 @@ func TestPgStorage_Integration_Store_ErrTokensTaken(t *testing.T) {
 	storage := newIntegrationPgStorage(t)
 	ctx := t.Context()
 
-	require.NoError(t, storage.Store(ctx, tok, url))
+	userID, err := storage.CreateUser(ctx)
+	require.NoError(t, err)
 
-	err := storage.Store(ctx, tok, "https://google.com")
+	require.NoError(t, storage.Store(ctx, tok, url, userID))
+
+	err = storage.Store(ctx, tok, "https://google.com", userID)
 	var errTT *ErrTokenTaken
 	assert.ErrorAs(t, err, &errTT)
 }
@@ -133,12 +139,30 @@ func TestPgStorage_Integration_Store_ErrOriginalURLExists(t *testing.T) {
 	url := "https://ya.ru"
 	anotherTok := "TOKaNoTHer"
 
-	require.NoError(t, storage.Store(ctx, tok, url))
+	userID, err := storage.CreateUser(ctx)
+	require.NoError(t, err)
 
-	err := storage.Store(ctx, anotherTok, url)
+	require.NoError(t, storage.Store(ctx, tok, url, userID))
+
+	err = storage.Store(ctx, anotherTok, url, userID)
 	var eoue *ErrOriginalURLExists
 	require.ErrorAs(t, err, &eoue)
 	assert.Equal(t, tok, eoue.StoredToken)
 	assert.Equal(t, url, eoue.URL)
 	// Проверки всех полей в деталях представлены в тестах на моке pgxmock
+}
+
+func TestPgStorage_Integration_ListUserURLs_Success(t *testing.T) {
+	storage := newIntegrationPgStorage(t)
+	ctx := t.Context()
+
+	userID, err := storage.CreateUser(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, storage.Store(ctx, tok, url, userID))
+
+	res, err := storage.ListUserURLs(ctx, userID)
+	require.NoError(t, err)
+	assert.Len(t, res, 1)
+	assert.Equal(t, tok, res[0].ShortURL)
 }

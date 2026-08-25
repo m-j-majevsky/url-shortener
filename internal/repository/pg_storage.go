@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/m-j-majevsky/url-shortener/internal/model"
 )
 
 type (
@@ -28,6 +30,7 @@ type (
 	// Сделав интерфейс приватным мы также избегаем просачивания наружу пакета
 	// внутренних типов pgx и pgconn.
 	dbtx interface {
+		Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 		QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 		Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 		Ping(ctx context.Context) error
@@ -46,18 +49,22 @@ func NewPgStorage(db dbtx) *pgStorage {
 	}
 }
 
-func (s *pgStorage) Store(ctx context.Context, token string, longURL string) error {
+func (s *pgStorage) Store(ctx context.Context, token, longURL, userID string) error {
 	// Важно: ON CONFLICT срабатывает _только_ для original_url.
 	// Конфликты по token будут падать в ошибку, которую мы обработаем ниже.
-	const q = `INSERT INTO shorten_urls (token, original_url) 
-			   VALUES ($1, $2)
+	const q = `INSERT INTO shorten_urls (token, original_url, user_id) 
+			   VALUES ($1, $2, $3)
 			   ON CONFLICT (original_url) DO UPDATE 
 			   SET original_url = EXCLUDED.original_url 
 			   RETURNING token`
 
-	var returnedToken string
+	var userUIID pgtype.UUID
+	if err := userUIID.Scan(userID); err != nil {
+		return fmt.Errorf("неверный формат ID пользователя %q: %w", userID, err)
+	}
 
-	row := s.db.QueryRow(ctx, q, token, longURL)
+	var returnedToken string
+	row := s.db.QueryRow(ctx, q, token, longURL, userUIID)
 	if err := row.Scan(&returnedToken); err != nil {
 		// Различаем по коду PG нарушение уникальности и прочие ошибки
 		var pgErr *pgconn.PgError
@@ -111,9 +118,14 @@ func (s *pgStorage) Ping(ctx context.Context) error {
 // Важно:
 // Гарантировать уникальность Batch.Token среди элемемнов параметра batch,
 // это ответсвенность вызывающего кода!
-func (s *pgStorage) BatchStore(ctx context.Context, batchReq Batch) (Batch, error) {
+func (s *pgStorage) BatchStore(ctx context.Context, batchReq Batch, userID string) (Batch, error) {
 	if len(batchReq) == 0 {
 		return Batch{}, nil
+	}
+
+	var userUIID pgtype.UUID
+	if err := userUIID.Scan(userID); err != nil {
+		return Batch{}, fmt.Errorf("неверный формат ID пользователя %q: %w", userID, err)
 	}
 
 	tx, err := s.db.Begin(ctx)
@@ -126,8 +138,8 @@ func (s *pgStorage) BatchStore(ctx context.Context, batchReq Batch) (Batch, erro
 	const qStoreName = "batch_store"
 	// Важно: ON CONFLICT срабатывает _только_ для original_url.
 	// Конфликты по token будут падать в ошибку, которую мы обработаем ниже.
-	const qStore = `INSERT INTO shorten_urls (token, original_url) 
-					VALUES ($1, $2)
+	const qStore = `INSERT INTO shorten_urls (token, original_url, user_id) 
+					VALUES ($1, $2, $3)
 					ON CONFLICT (original_url) DO UPDATE 
 			        SET original_url = EXCLUDED.original_url 
 					RETURNING token`
@@ -142,7 +154,7 @@ func (s *pgStorage) BatchStore(ctx context.Context, batchReq Batch) (Batch, erro
 	for i := range batchRes {
 		item := &batchRes[i]
 
-		row := tx.QueryRow(ctx, qStoreName, item.Token, item.OriginalURL)
+		row := tx.QueryRow(ctx, qStoreName, item.Token, item.OriginalURL, userUIID)
 
 		var returnedToken string
 		if err := row.Scan(&returnedToken); err != nil {
@@ -209,4 +221,55 @@ func (s *pgStorage) DeleteByTokens(ctx context.Context, tokens []string) error {
 	}
 
 	return nil
+}
+
+func (s *pgStorage) CheckUserExists(ctx context.Context, userID string) (exists bool, err error) {
+	const q = `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)`
+
+	var userUIID pgtype.UUID
+	if err := userUIID.Scan(userID); err != nil {
+		return false, fmt.Errorf("неверный формат ID пользователя %q: %w", userID, err)
+	}
+
+	err = s.db.QueryRow(ctx, q, userUIID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("ошибка запроса пользователя с ID = %v: %w", userID, err)
+	}
+
+	return
+}
+
+func (s *pgStorage) CreateUser(ctx context.Context) (string, error) {
+	const q = `INSERT INTO users DEFAULT VALUES RETURNING id`
+
+	var id pgtype.UUID
+	if err := s.db.QueryRow(ctx, q).Scan(&id); err != nil {
+		return "", fmt.Errorf("ошибка добавления пользователя в БД: %w", err)
+	}
+
+	return id.String(), nil
+}
+
+func (s *pgStorage) ListUserURLs(ctx context.Context, userID string) (model.UserURLsRes, error) {
+	const q = `SELECT token, original_url
+               FROM shorten_urls
+               WHERE user_id = $1`
+
+	var userUIID pgtype.UUID
+	if err := userUIID.Scan(userID); err != nil {
+		return model.UserURLsRes{}, fmt.Errorf("неверный формат ID пользователя %q: %w", userID, err)
+	}
+
+	rows, err := s.db.Query(ctx, q, userUIID)
+	if err != nil {
+		return model.UserURLsRes{}, fmt.Errorf("ошибка запроса по URL для пользователя c ID %q: %w", userID, err)
+	}
+	defer rows.Close()
+
+	userURLs, err := pgx.CollectRows(rows, pgx.RowToStructByName[model.UserURLsResItem])
+	if err != nil {
+		return model.UserURLsRes{}, fmt.Errorf("ошибка обработки ответа от хранилища: %w", err)
+	}
+
+	return userURLs, nil
 }

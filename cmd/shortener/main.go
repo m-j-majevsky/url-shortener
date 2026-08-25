@@ -184,11 +184,7 @@ func makeServiceAndRouter(cfg config.ApplicationConfig) (http.Handler, error) {
 		return nil, err
 	}
 
-	handler := logger.WithLogging(
-		handler.GzipMiddleware(
-			handler.NewRouter(svc, cfg.TargetBaseURL)))
-
-	return handler, nil
+	return handler.NewRouter(handler.NewRouterParams(cfg, svc))
 }
 
 // Создаем сервис и запускаем HTTP-сервер

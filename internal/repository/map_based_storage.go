@@ -7,21 +7,28 @@ import (
 	"os"
 	"strconv"
 	"sync"
+
+	"github.com/google/uuid"
+	"github.com/m-j-majevsky/url-shortener/internal/model"
 )
 
 type (
 	TokenToURL map[string]string
 
+	UserToTokens map[string][]string
+
 	LocalStorage struct {
 		mu sync.Mutex
 
-		data TokenToURL
+		data  TokenToURL
+		users UserToTokens
 	}
 
 	itemRepr struct {
 		UUID        string `json:"uuid"`
 		ShortURL    string `json:"short_url"`
 		OriginalURL string `json:"original_url"`
+		UserID      string `json:"user_id"`
 	}
 
 	storageRepr []itemRepr
@@ -31,9 +38,14 @@ func newTokenToURL() TokenToURL {
 	return make(map[string]string)
 }
 
+func newUserToTokens() UserToTokens {
+	return make(map[string][]string)
+}
+
 func NewLocalStorage() *LocalStorage {
 	return &LocalStorage{
-		data: newTokenToURL(),
+		data:  newTokenToURL(),
+		users: newUserToTokens(),
 	}
 }
 
@@ -41,10 +53,27 @@ func (s *LocalStorage) exportRepr() storageRepr {
 	result := make(storageRepr, len(s.data))
 	var idx int = 1
 	for su, ou := range s.data {
-		result[idx-1] = itemRepr{UUID: strconv.Itoa(idx), ShortURL: su, OriginalURL: ou}
+		uid := s.findUserByToken(su)
+		result[idx-1] = itemRepr{
+			UUID:        strconv.Itoa(idx),
+			ShortURL:    su,
+			OriginalURL: ou,
+			UserID:      uid,
+		}
 		idx += 1
 	}
 	return result
+}
+
+func (s *LocalStorage) findUserByToken(tok string) string {
+	for user, tokens := range s.users {
+		for _, t := range tokens {
+			if t == tok {
+				return user
+			}
+		}
+	}
+	return ""
 }
 
 // Сохраняет текущее состояние Storage в JSON-файл.
@@ -70,6 +99,48 @@ func (s *LocalStorage) importRepr(repr storageRepr) {
 	s.data = make(TokenToURL, len(repr))
 	for _, item := range repr {
 		s.data[item.ShortURL] = item.OriginalURL
+		s.addTokenToUser(item.ShortURL, item.UserID)
+	}
+}
+
+func (s *LocalStorage) addTokenToUser(tok, uid string) {
+	// Вызывается в контексте уже захваченного s.mu
+	// или при загрузке данных из файла, когда захват не имеет смысла
+
+	// Проверяем, существует ли ключ в мапе
+	if _, exists := s.users[uid]; !exists {
+		// Если ключа нет, создаем новый слайс
+		s.users[uid] = []string{tok}
+		return
+	}
+
+	// Если ключ существует, проверяем, нет ли уже такого значения
+	for _, v := range s.users[uid] {
+		if v == tok {
+			return // Значение уже есть, ничего не делаем
+		}
+	}
+
+	// Добавляем новое значение в конец слайса
+	s.users[uid] = append(s.users[uid], tok)
+}
+
+func (s *LocalStorage) deleteTokenFromUsers(tok string) {
+	// Вызывается в контексте уже захваченного s.mu
+
+	// Проверяем каждого юзера из хранилища
+	for u, ts := range s.users {
+		// Ищем индекс значения в слайсе
+		for i, t := range ts {
+			if t == tok {
+				// Сдвигаем элементы влево
+				copy(ts[i:], ts[i+1:])
+				// Обрезаем слайс
+				s.users[u] = ts[:len(ts)-1]
+				// Если слайс стал пустым, оставляем его для дальнейшего
+				return
+			}
+		}
 	}
 }
 
@@ -93,7 +164,7 @@ func (s *LocalStorage) LoadFromFile(path string) error {
 }
 
 // Сохраняет longURL под токеном. Возвращает ErrTokenTaken, если токен занят.
-func (s *LocalStorage) Store(_ context.Context, token string, longURL string) error {
+func (s *LocalStorage) Store(_ context.Context, token, longURL, userID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -111,6 +182,8 @@ func (s *LocalStorage) Store(_ context.Context, token string, longURL string) er
 	}
 
 	s.data[token] = longURL
+	s.addTokenToUser(token, userID)
+
 	return nil
 }
 
@@ -128,7 +201,7 @@ func (s *LocalStorage) Resolve(_ context.Context, token string) (string, error) 
 // Важно:
 // Гарантировать уникальность Batch.Token среди элемемнов параметра batch,
 // это ответсвенность вызывающего кода!
-func (s *LocalStorage) BatchStore(_ context.Context, batch Batch) (Batch, error) {
+func (s *LocalStorage) BatchStore(_ context.Context, batch Batch, userID string) (Batch, error) {
 	result := make(Batch, len(batch))
 	copy(result, batch)
 
@@ -164,6 +237,7 @@ func (s *LocalStorage) BatchStore(_ context.Context, batch Batch) (Batch, error)
 		} else {
 			// Запись resIt чиста, можно сохранять
 			s.data[token] = url
+			s.addTokenToUser(token, userID)
 		}
 	}
 
@@ -176,7 +250,50 @@ func (s *LocalStorage) DeleteByTokens(_ context.Context, tokens []string) error 
 
 	for _, token := range tokens {
 		delete(s.data, token)
+		s.deleteTokenFromUsers(token)
 	}
 
 	return nil
+}
+
+func (s *LocalStorage) CheckUserExists(_ context.Context, uid string) (exists bool, err error) {
+	if uid == "" {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	exists = (s.users[uid] != nil)
+	return
+}
+
+func (s *LocalStorage) CreateUser(_ context.Context) (uid string, err error) {
+	uid = uuid.New().String()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.users[uid] = make([]string, 0)
+
+	return
+}
+
+func (s *LocalStorage) ListUserURLs(_ context.Context, userID string) (model.UserURLsRes, error) {
+	tokens, exists := s.users[userID]
+	if !exists {
+		return model.UserURLsRes{}, nil
+	}
+
+	var res model.UserURLsRes
+	for _, tok := range tokens {
+		if url, exists := s.data[tok]; exists {
+			res = append(res, model.UserURLsResItem{
+				ShortURL:    tok,
+				OriginalURL: url,
+			})
+		}
+	}
+
+	return res, nil
 }

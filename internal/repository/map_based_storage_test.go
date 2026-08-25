@@ -14,6 +14,8 @@ type MapBasedDBTestSuite struct {
 }
 
 var (
+	userID = "8222be97-0266-40d1-b069-54f29508de43"
+
 	yandexToken = "sPv80uUs"
 	yandexURL   = "https://yandex.ru"
 
@@ -29,7 +31,7 @@ var (
 
 func (s *MapBasedDBTestSuite) SetupTest() {
 	s.storage = NewLocalStorage()
-	if err := s.storage.Store(context.Background(), yandexToken, yandexURL); err != nil {
+	if err := s.storage.Store(context.Background(), yandexToken, yandexURL, userID); err != nil {
 		s.T().Fatalf("Ошибка подготовки тестовых данных: %s", err.Error())
 	}
 }
@@ -70,7 +72,7 @@ func (suite *MapBasedDBTestSuite) TestStore_Success() {
 
 	ctx := context.Background()
 
-	errStore := suite.storage.Store(ctx, mailToken, mailURL)
+	errStore := suite.storage.Store(ctx, mailToken, mailURL, userID)
 	suite.Require().NoError(errStore)
 
 	url, errResolse := suite.storage.Resolve(ctx, mailToken)
@@ -87,7 +89,7 @@ func (suite *MapBasedDBTestSuite) TestStore_ErrTokenTaken() {
 	// (yandexToken -> yandexURL) уже лежат в хранилище;
 	// других данных в нём нет
 
-	err := suite.storage.Store(context.Background(), yandexToken, goURL)
+	err := suite.storage.Store(context.Background(), yandexToken, goURL, userID)
 	suite.Require().Error(err)
 	var errTT *ErrTokenTaken
 	suite.ErrorAs(err, &errTT)
@@ -99,7 +101,7 @@ func (suite *MapBasedDBTestSuite) TestStore_ErrOriginalURLExists() {
 	// (yandexToken -> yandexURL) уже лежат в хранилище;
 	// других данных в нём нет
 
-	err := suite.storage.Store(context.Background(), someToken, yandexURL)
+	err := suite.storage.Store(context.Background(), someToken, yandexURL, userID)
 	suite.Require().Error(err)
 	var eoue *ErrOriginalURLExists
 	suite.ErrorAs(err, &eoue)
@@ -112,7 +114,7 @@ func (suite *MapBasedDBTestSuite) TestStore_ErrOriginalURLExists_While_Token_Tak
 	// (yandexToken -> yandexURL) уже лежат в хранилище;
 	// других данных в нём нет
 
-	err := suite.storage.Store(context.Background(), yandexToken, yandexURL)
+	err := suite.storage.Store(context.Background(), yandexToken, yandexURL, userID)
 	suite.Require().Error(err)
 	var eoue *ErrOriginalURLExists
 	suite.ErrorAs(err, &eoue)
@@ -132,7 +134,7 @@ func (suite *MapBasedDBTestSuite) TestBatchStore_Success() {
 	batch := NewBatch(model.BatchShortenReq{})
 
 	// Пустой батч
-	res, err := suite.storage.BatchStore(ctx, batch)
+	res, err := suite.storage.BatchStore(ctx, batch, userID)
 	suite.Require().NoError(err)
 	suite.Assert().Empty(res)
 
@@ -142,7 +144,7 @@ func (suite *MapBasedDBTestSuite) TestBatchStore_Success() {
 		Token:         mailToken,
 		OriginalURL:   mailURL,
 	})
-	res, err = suite.storage.BatchStore(ctx, batch)
+	res, err = suite.storage.BatchStore(ctx, batch, userID)
 	suite.Require().NoError(err)
 	suite.Require().Len(res, 1)
 	suite.checkResItemAndCompare(batch[0], res[0])
@@ -158,7 +160,7 @@ func (suite *MapBasedDBTestSuite) TestBatchStore_Success() {
 		Token:         someToken,
 		OriginalURL:   someURL,
 	})
-	res, err = suite.storage.BatchStore(ctx, batch)
+	res, err = suite.storage.BatchStore(ctx, batch, userID)
 	suite.Require().NoError(err)
 	suite.Require().Len(res, 2)
 	suite.checkResItemAndCompare(batch[0], res[0])
@@ -193,7 +195,7 @@ func (suite *MapBasedDBTestSuite) TestBatchStore_ErrTokenTaken() {
 		OriginalURL:   someURL,
 	})
 
-	res, err := suite.storage.BatchStore(ctx, batch)
+	res, err := suite.storage.BatchStore(ctx, batch, userID)
 
 	suite.Require().Error(err)
 	var errTT *ErrTokenTaken
@@ -236,7 +238,7 @@ func (suite *MapBasedDBTestSuite) TestBatchStore_ErrOriginalURLExists() {
 		OriginalURL:   someURL,
 	})
 
-	res, err := suite.storage.BatchStore(ctx, batch)
+	res, err := suite.storage.BatchStore(ctx, batch, userID)
 
 	suite.Require().Error(err)
 	var eoue *ErrOriginalURLExists
@@ -275,7 +277,7 @@ func (suite *MapBasedDBTestSuite) TestBatchStore_ErrOriginalURLExists_While_Toke
 		OriginalURL:   yandexURL,   // Тут должен быть ErrOriginalURLExists
 	})
 
-	res, err := suite.storage.BatchStore(ctx, batch)
+	res, err := suite.storage.BatchStore(ctx, batch, userID)
 
 	suite.Require().Error(err)
 	var eoue *ErrOriginalURLExists
@@ -318,7 +320,7 @@ func (suite *MapBasedDBTestSuite) TestDeleteByTokens_All_Items_Success() {
 	ctx := context.Background()
 
 	// Добавим еще элемент в хранилище
-	errStore := suite.storage.Store(ctx, mailToken, mailURL)
+	errStore := suite.storage.Store(ctx, mailToken, mailURL, userID)
 	suite.Require().NoError(errStore)
 
 	suite.Require().Len(suite.storage.data, 2)
@@ -346,7 +348,7 @@ func (suite *MapBasedDBTestSuite) TestDeleteByTokens_Some_Items_Success() {
 		Token:         someToken,
 		OriginalURL:   someURL,
 	})
-	res, err := suite.storage.BatchStore(ctx, batch)
+	res, err := suite.storage.BatchStore(ctx, batch, userID)
 	suite.Require().NoError(err)
 	suite.Require().Len(res, 2)
 	suite.Require().Len(suite.storage.data, 3)
@@ -365,4 +367,97 @@ func (suite *MapBasedDBTestSuite) TestDeleteByTokens_Some_Items_Success() {
 func (suite *MapBasedDBTestSuite) TestDeleteByTokens_Errors() {
 	// В кейсе TokenToURL, хранилища основанного на мапе,
 	// ошибок в этом методе нет
+}
+
+// CheckUserExists
+
+func (s *MapBasedDBTestSuite) TestCheckUserExists_UserNotExists() {
+	exists, err := s.storage.CheckUserExists(context.Background(), "non-existent-user")
+	s.Require().NoError(err)
+	s.False(exists)
+}
+
+func (s *MapBasedDBTestSuite) TestCheckUserExists_UserExists() {
+	// Создаем пользователя
+	uid, err := s.storage.CreateUser(context.Background())
+	s.Require().NoError(err)
+
+	exists, err := s.storage.CheckUserExists(context.Background(), uid)
+	s.Require().NoError(err)
+	s.True(exists)
+}
+
+// CreateUser
+
+func (s *MapBasedDBTestSuite) TestCreateUser() {
+	uid, err := s.storage.CreateUser(context.Background())
+	s.Require().NoError(err)
+	s.NotEmpty(uid)
+
+	// Проверяем, что пользователь создался
+	exists, err := s.storage.CheckUserExists(context.Background(), uid)
+	s.Require().NoError(err)
+	s.True(exists)
+}
+
+// ListUserURLs
+
+func (s *MapBasedDBTestSuite) TestListUserURLs_EmptyUser() {
+	// Создаем нового пользователя без URL
+	uid, err := s.storage.CreateUser(context.Background())
+	s.Require().NoError(err)
+
+	urls, err := s.storage.ListUserURLs(context.Background(), uid)
+	s.Require().NoError(err)
+	s.Empty(urls)
+}
+
+func (s *MapBasedDBTestSuite) TestListUserURLs_ExistingUser() {
+	// Проверяем, что тестовые данные из SetupTest() корректно возвращаются
+	urls, err := s.storage.ListUserURLs(context.Background(), userID)
+	s.Require().NoError(err)
+	s.Len(urls, 1)
+
+	s.Equal(yandexToken, urls[0].ShortURL)
+	s.Equal(yandexURL, urls[0].OriginalURL)
+}
+
+func (s *MapBasedDBTestSuite) TestListUserURLs_NonExistentUser() {
+	urls, err := s.storage.ListUserURLs(context.Background(), "non-existent-user")
+	s.Require().NoError(err)
+	s.Empty(urls)
+}
+
+func (s *MapBasedDBTestSuite) TestListUserURLs_MultipleURLs() {
+	// Добавляем несколько URL для пользователя
+	if err := s.storage.Store(context.Background(), mailToken, mailURL, userID); err != nil {
+		s.Fail("Ошибка при сохранении mailURL")
+	}
+	if err := s.storage.Store(context.Background(), goToken, goURL, userID); err != nil {
+		s.Fail("Ошибка при сохранении goURL")
+	}
+
+	urls, err := s.storage.ListUserURLs(context.Background(), userID)
+	s.Require().NoError(err)
+	s.Len(urls, 3) // Yandex + Mail + Go
+
+	// Проверяем наличие всех URL
+	foundYandex := false
+	foundMail := false
+	foundGo := false
+
+	for _, url := range urls {
+		switch url.ShortURL {
+		case yandexToken:
+			foundYandex = true
+		case mailToken:
+			foundMail = true
+		case goToken:
+			foundGo = true
+		}
+	}
+
+	s.True(foundYandex)
+	s.True(foundMail)
+	s.True(foundGo)
 }

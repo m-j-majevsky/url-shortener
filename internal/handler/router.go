@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
+	"github.com/m-j-majevsky/url-shortener/internal/config"
 	enc "github.com/m-j-majevsky/url-shortener/internal/encoding"
 	"github.com/m-j-majevsky/url-shortener/internal/logger"
 	"github.com/m-j-majevsky/url-shortener/internal/model"
@@ -31,9 +32,10 @@ const (
 )
 
 type URLShortener interface {
-	GenerateAndStore(ctx context.Context, longURL string) (string, error)
-	BatchStore(ctx context.Context, batch model.BatchShortenReq) (model.BatchShortenRes, error)
+	GenerateAndStore(ctx context.Context, longURL, userID string) (string, error)
+	BatchStore(ctx context.Context, batch model.BatchShortenReq, userID string) (model.BatchShortenRes, error)
 	Resolve(ctx context.Context, token string) (string, error)
+	ListUserURLs(ctx context.Context, userID string) (model.UserURLsRes, error)
 }
 
 type ServiceConfigReader interface {
@@ -44,14 +46,53 @@ type StoragePinger interface {
 	Ping(ctx context.Context) error
 }
 
-type Router struct {
-	mux     *chi.Mux
-	service URLShortener
-	pinger  StoragePinger
-	baseURL string
+type UserStorage interface {
+	CheckUserExists(ctx context.Context, uid string) (bool, error)
+	CreateUser(ctx context.Context) (string, error)
 }
 
-func (rt Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+type UserCookieParams struct {
+	UserCookieName string
+	UserCookieTTL  time.Duration
+	SigningKey     []byte
+	EncryptingKey  []byte
+	userIDKey      contextKey
+}
+
+func NewUserCookieParams(cfg config.ApplicationConfig) UserCookieParams {
+	return UserCookieParams{
+		UserCookieName: cfg.CookieUserIDName,
+		UserCookieTTL:  cfg.CookieUserIDTTL,
+		SigningKey:     cfg.SigningKey,
+		EncryptingKey:  cfg.EncryptingKey,
+	}
+}
+
+type RouterParams struct {
+	Service    URLShortener
+	BaseURL    string
+	UserCookie UserCookieParams
+}
+
+func NewRouterParams(cfg config.ApplicationConfig, svc URLShortener) RouterParams {
+	return RouterParams{
+		Service:    svc,
+		BaseURL:    cfg.TargetBaseURL,
+		UserCookie: NewUserCookieParams(cfg),
+	}
+}
+
+type contextKey string
+
+type Router struct {
+	mux       *chi.Mux
+	service   URLShortener
+	pinger    StoragePinger
+	baseURL   string
+	userIDKey contextKey
+}
+
+func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rt.mux.ServeHTTP(w, r)
 }
 
@@ -67,35 +108,47 @@ var (
 	badRequestWithMethodNotAllowed = badRequest("недопустимый метод")
 )
 
-func NewRouter(svc URLShortener, targetBaseURL string) Router {
+func NewRouter(params RouterParams) (*Router, error) {
 	cr := chi.NewRouter()
 
-	mux := Router{
-		mux:     cr,
-		service: svc,
-		pinger:  getStoragePinger(svc),
-		baseURL: targetBaseURL,
+	cr.Use(logger.WithLogging)
+	cr.Use(GzipMiddleware)
+
+	us, err := getUserStorage(params.Service)
+	if err != nil {
+		return nil, err
 	}
 
-	cr.Group(func(cr chi.Router) {
-		cr.Use(func(next http.Handler) http.Handler {
+	params.UserCookie.userIDKey = contextKey(params.UserCookie.UserCookieName)
+	mux := &Router{
+		mux:       cr,
+		service:   params.Service,
+		pinger:    getStoragePinger(params.Service),
+		baseURL:   params.BaseURL,
+		userIDKey: params.UserCookie.userIDKey,
+	}
+
+	// Текстовый API
+	cr.Route("/", func(r chi.Router) {
+		r.Use(func(next http.Handler) http.Handler {
 			return responseContentTypeMiddleware(next, TextPlain)
 		})
-		cr.Post("/", mux.shortenLongURLForText)
+		r.Use(CookieMiddleware(us, params.UserCookie))
+
+		r.Post("/", mux.shortenLongURLForText)
 	})
 
-	cr.Group(func(cr chi.Router) {
-		cr.Use(func(next http.Handler) http.Handler {
+	// JSON API
+	cr.Route("/api", func(r chi.Router) {
+		r.Use(func(next http.Handler) http.Handler {
 			return responseContentTypeMiddleware(next, AppJson)
 		})
-		cr.Post("/api/shorten/batch", mux.shortenBatch)
-	})
+		r.Use(CookieMiddleware(us, params.UserCookie))
 
-	cr.Group(func(cr chi.Router) {
-		cr.Use(func(next http.Handler) http.Handler {
-			return responseContentTypeMiddleware(next, AppJson)
-		})
-		cr.Post("/api/shorten", mux.shortenLongURLForJson)
+		r.Get("/user/urls", mux.getUserURLs)
+
+		r.Post("/shorten", mux.shortenLongURLForJson)
+		r.Post("/shorten/batch", mux.shortenBatch)
 	})
 
 	cr.Get("/{token}", mux.resolveShortURL)
@@ -109,26 +162,57 @@ func NewRouter(svc URLShortener, targetBaseURL string) Router {
 	}
 
 	cr.NotFound(badRequestWithWrongPath)
-
 	cr.MethodNotAllowed(badRequestWithMethodNotAllowed)
 
-	return mux
+	return mux, nil
+}
+
+func getServiceConfig(svc URLShortener) (service.ShortenerConfig, error) {
+	scr, ok := svc.(ServiceConfigReader)
+	if !ok {
+		return service.ShortenerConfig{}, fmt.Errorf("невозможно получить ServiceConfigReader")
+	}
+	return scr.GetConfig(), nil
+}
+
+func getUserStorage(svc URLShortener) (UserStorage, error) {
+	cfg, err := getServiceConfig(svc)
+	if err != nil {
+		return nil, err
+	}
+
+	us, ok := cfg.Storage.(UserStorage)
+	if !ok {
+		return nil, fmt.Errorf("хранилище не поддерживает интерфейс middleware.UserStorage")
+	}
+
+	return us, nil
 }
 
 func getStoragePinger(svc URLShortener) StoragePinger {
-	scr, ok := svc.(ServiceConfigReader)
-	if !ok {
+	cfg, err := getServiceConfig(svc)
+	if err != nil {
 		return nil
 	}
-	if _, ok := scr.GetConfig().Storage.(StoragePinger); !ok {
+
+	if _, ok := cfg.Storage.(StoragePinger); !ok {
 		return nil
 	}
+
 	sp, ok := svc.(StoragePinger)
 	if !ok {
 		return nil
 	}
+
 	return sp
 }
+
+func (rt *Router) getUserIDFromContext(ctx context.Context) (string, bool) {
+	val, ok := ctx.Value(rt.userIDKey).(string)
+	return val, ok
+}
+
+// Путь "/ping", GET
 
 func (rt *Router) pingDB(w http.ResponseWriter, r *http.Request) {
 	if rt.pinger == nil {
@@ -149,6 +233,8 @@ func (rt *Router) pingDB(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 }
+
+// Путь "/{token}", GET
 
 func (rt *Router) resolveShortURL(w http.ResponseWriter, r *http.Request) {
 	token := chi.URLParam(r, "token")
@@ -179,7 +265,16 @@ func (rt *Router) resolveShortURL(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 }
 
+// Путь "/", POST (текстовый api)
+
 func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) {
+	userID, ok := rt.getUserIDFromContext(r.Context())
+	if !ok {
+		logger.Log.Debug(fmt.Sprintf("empty %v extracted from request context", rt.userIDKey))
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
 	bodyBytes, err := io.ReadAll(r.Body)
 
 	if err != nil {
@@ -198,7 +293,7 @@ func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) 
 	defer cancel()
 
 	resCode := http.StatusCreated
-	token, shortenerErr := rt.service.GenerateAndStore(ctx, string(bodyBytes))
+	token, shortenerErr := rt.service.GenerateAndStore(ctx, string(bodyBytes), userID)
 	if shortenerErr != nil {
 		var eoue *repository.ErrOriginalURLExists
 		if errors.As(shortenerErr, &eoue) {
@@ -214,10 +309,20 @@ func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.WriteHeader(resCode)
-	io.WriteString(w, fmt.Sprintf("%s/%s", rt.baseURL, token))
+	resBody := fmt.Sprintf("%s/%s", rt.baseURL, token)
+	io.WriteString(w, resBody)
 }
 
+// Путь "/api/shorten", POST
+
 func (rt *Router) shortenLongURLForJson(w http.ResponseWriter, r *http.Request) {
+	userID, ok := rt.getUserIDFromContext(r.Context())
+	if !ok {
+		logger.Log.Debug(fmt.Sprintf("empty %v extracted from request context", rt.userIDKey))
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
 	if rct := r.Header.Get(ContentType); rct != AppJson {
 		logger.Log.Debug("wrong request Content-Type: " + rct)
 		http.Error(w, "ожидается запрос с заголовком Content-Type: application/json", http.StatusBadRequest)
@@ -240,7 +345,7 @@ func (rt *Router) shortenLongURLForJson(w http.ResponseWriter, r *http.Request) 
 	defer cancel()
 
 	resCode := http.StatusCreated
-	token, shortenerErr := rt.service.GenerateAndStore(ctx, req.URL)
+	token, shortenerErr := rt.service.GenerateAndStore(ctx, req.URL, userID)
 	if shortenerErr != nil {
 		var eoue *repository.ErrOriginalURLExists
 		if errors.As(shortenerErr, &eoue) {
@@ -266,7 +371,16 @@ func (rt *Router) shortenLongURLForJson(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+// Путь "/api/shorten/batch", POST
+
 func (rt *Router) shortenBatch(w http.ResponseWriter, r *http.Request) {
+	userID, ok := rt.getUserIDFromContext(r.Context())
+	if !ok {
+		logger.Log.Debug(fmt.Sprintf("empty %v extracted from request context", rt.userIDKey))
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
 	if rct := r.Header.Get(ContentType); rct != AppJson {
 		logger.Log.Debug("wrong request Content-Type: " + rct)
 		http.Error(w, "ожидается запрос с заголовком Content-Type: application/json", http.StatusBadRequest)
@@ -288,15 +402,15 @@ func (rt *Router) shortenBatch(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), procTimeout)
 	defer cancel()
 
-	batchRes, err := rt.service.BatchStore(ctx, batchReq)
+	batchRes, err := rt.service.BatchStore(ctx, batchReq, userID)
 	if err != nil {
 		logger.Log.Debug("error providing batch of short URLs", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
-	setBaseForShortenURL(rt.baseURL, batchRes)
-	w.WriteHeader(getResCode(batchRes))
+	setBaseForShortenBatch(rt.baseURL, batchRes)
+	w.WriteHeader(getShortenBatchStatusCode(batchRes))
 	if err := json.NewEncoder(w).Encode(batchRes); err != nil {
 		logger.Log.Debug("error encoding response", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -304,7 +418,7 @@ func (rt *Router) shortenBatch(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func getResCode(batchRes model.BatchShortenRes) int {
+func getShortenBatchStatusCode(batchRes model.BatchShortenRes) int {
 	for _, it := range batchRes {
 		if it.ConflictedURL {
 			return http.StatusConflict
@@ -322,8 +436,55 @@ func validateBatchReq(batch model.BatchShortenReq) error {
 	return nil
 }
 
-func setBaseForShortenURL(baseURL string, batch model.BatchShortenRes) {
+func setBaseForShortenBatch(baseURL string, batch model.BatchShortenRes) {
 	for i := range batch {
 		batch[i].ShortURL = fmt.Sprintf("%s/%s", baseURL, batch[i].ShortURL)
+	}
+}
+
+// Путь "/api/user/urls", GET
+
+func (rt *Router) getUserURLs(w http.ResponseWriter, r *http.Request) {
+	userID, ok := rt.getUserIDFromContext(r.Context())
+	if !ok {
+		logger.Log.Debug(fmt.Sprintf("empty %v extracted from request context", rt.userIDKey))
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), procTimeout)
+	defer cancel()
+
+	res, err := rt.service.ListUserURLs(ctx, userID)
+	if err != nil {
+		logger.Log.Debug("error providing shortened URLs for user "+userID, zap.Error(err))
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(getUserURLsStatusCode(&res))
+	if len(res) != 0 {
+		setBaseForUserURLs(rt.baseURL, res)
+		err := json.NewEncoder(w).Encode(res)
+		if err != nil {
+			logger.Log.Debug("error encoding response", zap.Error(err))
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+	}
+}
+
+func getUserURLsStatusCode(res *model.UserURLsRes) int {
+	// При отсутствии сокращённых пользователем URL
+	// хендлер должен отдавать HTTP-статус 204 No Content.
+	if len(*res) == 0 {
+		return http.StatusNoContent
+	}
+	return http.StatusOK
+}
+
+func setBaseForUserURLs(baseURL string, res model.UserURLsRes) {
+	for i := range res {
+		res[i].ShortURL = fmt.Sprintf("%s/%s", baseURL, res[i].ShortURL)
 	}
 }

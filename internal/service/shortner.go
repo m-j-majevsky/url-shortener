@@ -12,10 +12,11 @@ import (
 )
 
 type BasicStorage interface {
-	Store(ctx context.Context, token string, longURL string) error
+	Store(ctx context.Context, token, longURL, userID string) error
 	Resolve(ctx context.Context, token string) (string, error)
-	BatchStore(ctx context.Context, batch repository.Batch) (repository.Batch, error)
+	BatchStore(ctx context.Context, batch repository.Batch, userID string) (repository.Batch, error)
 	DeleteByTokens(ctx context.Context, tokens []string) error
+	ListUserURLs(ctx context.Context, userID string) (model.UserURLsRes, error)
 }
 
 type StoragePinger interface {
@@ -121,7 +122,7 @@ func (s *Shortener) generateTokens(num int) ([]string, error) {
 	return result, nil
 }
 
-func (s *Shortener) GenerateAndStore(ctx context.Context, longURL string) (string, error) {
+func (s *Shortener) GenerateAndStore(ctx context.Context, longURL, userID string) (string, error) {
 	for i := 0; i < s.config.MaxStoringAttempts; i++ {
 		tokens, err := s.generateTokens(1)
 		if err != nil {
@@ -133,7 +134,7 @@ func (s *Shortener) GenerateAndStore(ctx context.Context, longURL string) (strin
 		}
 
 		token := tokens[0]
-		err = s.config.Storage.Store(ctx, token, longURL)
+		err = s.config.Storage.Store(ctx, token, longURL, userID)
 
 		if err == nil {
 			// Успех
@@ -179,7 +180,7 @@ func (s *Shortener) GetConfig() ShortenerConfig {
 	return s.config
 }
 
-func (s *Shortener) BatchStore(ctx context.Context, req model.BatchShortenReq) (model.BatchShortenRes, error) {
+func (s *Shortener) BatchStore(ctx context.Context, req model.BatchShortenReq, userID string) (model.BatchShortenRes, error) {
 	reqLen := len(req)
 	if reqLen == 0 {
 		return model.BatchShortenRes{}, nil
@@ -202,7 +203,7 @@ func (s *Shortener) BatchStore(ctx context.Context, req model.BatchShortenReq) (
 
 		assignTokensToBatchItems(batch, tokens)
 
-		storageRes, err := s.config.Storage.BatchStore(ctx, batch)
+		storageRes, err := s.config.Storage.BatchStore(ctx, batch, userID)
 		if err == nil {
 			// Полный успех, можно переходить к оформлению ответа
 			stored = append(stored, storageRes...)
@@ -315,4 +316,17 @@ func (s *Shortener) restoreWithError(ctx context.Context, toRollback repository.
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// ListUserURLs запрашивает из хранилища все записи вида (shortenURL, originalURL),
+// сохраненные пользователем userID за время его жизни
+func (s *Shortener) ListUserURLs(ctx context.Context, userID string) (model.UserURLsRes, error) {
+	res, err := s.config.Storage.ListUserURLs(ctx, userID)
+	if err != nil {
+		return model.UserURLsRes{}, fmt.Errorf("ошибка хранилища: %w", err)
+	}
+	if res == nil {
+		res = model.UserURLsRes{}
+	}
+	return res, nil
 }

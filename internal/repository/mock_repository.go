@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 
+	"github.com/m-j-majevsky/url-shortener/internal/model"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -16,8 +17,8 @@ func (m *MockPgStorage) Ping(ctx context.Context) error {
 	return args.Error(0)
 }
 
-func (m *MockPgStorage) Store(ctx context.Context, token string, longURL string) error {
-	args := m.Called(ctx, token, longURL)
+func (m *MockPgStorage) Store(ctx context.Context, token string, longURL string, userID string) error {
+	args := m.Called(ctx, token, longURL, userID)
 
 	return args.Error(0)
 }
@@ -31,14 +32,32 @@ func (m *MockPgStorage) Resolve(ctx context.Context, token string) (string, erro
 	return url, err
 }
 
-func (m *MockPgStorage) BatchStore(ctx context.Context, batch Batch) (Batch, error) {
-	args := m.Called(ctx, batch)
+func (m *MockPgStorage) BatchStore(ctx context.Context, batch Batch, userID string) (Batch, error) {
+	args := m.Called(ctx, batch, userID)
 
-	return args.Get(0).(Batch), args.Error(0)
+	return args.Get(0).(Batch), args.Error(1)
 }
 
 func (m *MockPgStorage) DeleteByTokens(ctx context.Context, tokens []string) error {
 	args := m.Called(ctx, tokens)
 
 	return args.Error(0)
+}
+
+func (m *MockPgStorage) CheckUserExists(ctx context.Context, userID string) (bool, error) {
+	agrs := m.Called(ctx, userID)
+
+	return agrs.Bool(0), agrs.Error(1)
+}
+
+func (m *MockPgStorage) CreateUser(ctx context.Context) (string, error) {
+	agrs := m.Called(ctx)
+
+	return agrs.String(0), agrs.Error(1)
+}
+
+func (m *MockPgStorage) ListUserURLs(ctx context.Context, userID string) (model.UserURLsRes, error) {
+	agrs := m.Called(ctx, userID)
+
+	return agrs.Get(0).(model.UserURLsRes), agrs.Error(1)
 }

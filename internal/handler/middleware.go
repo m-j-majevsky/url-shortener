@@ -2,9 +2,16 @@ package handler
 
 import (
 	"compress/gzip"
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/golang-jwt/jwt/v4"
+	"github.com/m-j-majevsky/url-shortener/internal/logger"
+	"go.uber.org/zap"
 )
 
 func responseContentTypeMiddleware(next http.Handler, ct string) http.Handler {
@@ -136,4 +143,94 @@ func GzipMiddleware(h http.Handler) http.Handler {
 
 func isValidRequestContentType(ct string) bool {
 	return ct == TextPlain || ct == AppJson
+}
+
+// Функциональность установки-извлечения cookie с ID пользователя
+
+type Claims struct {
+	jwt.RegisteredClaims
+	UserID string `json:"user_id"`
+}
+
+func CookieMiddleware(storage UserStorage, params UserCookieParams) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var userID string
+			var setNewCookie bool
+
+			cookie, err := r.Cookie(params.UserCookieName)
+			if err != nil {
+				// Cookie не найдена; требуется выдача токена
+				setNewCookie = true
+			} else { // err == nil
+				var decryptingErr error
+				userID, decryptingErr = decryptAndParseJWT(cookie.Value, params.EncryptingKey, params.SigningKey)
+				if decryptingErr != nil {
+					var eti *errTokenInvalid
+					if errors.As(decryptingErr, &eti) {
+						// Невалидный токен требует выдачи нового
+						setNewCookie = true
+						// userID остался пуст
+					} else {
+						// Ошибки дешифрования; считаем внутренней ошибкой сервера
+						logger.Log.Error("JWT decrypting failed", zap.Error(decryptingErr))
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
+				} else { // decryptingErr == nil
+					if userID == "" {
+						// Если кука присутствует в запросе, но не содержит ID пользователя,
+						// так как она пуста, то возвращаем HTTP-статус 401 Unauthorized
+						w.WriteHeader(http.StatusUnauthorized)
+						return
+					}
+
+					// setNewCookie остался false, userID не пуст
+				}
+			}
+
+			if setNewCookie {
+				userID, err = storage.CreateUser(r.Context())
+				if err != nil {
+					logger.Log.Error("user creating failed", zap.Error(err))
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+
+				responseCookieValue, err := generateEncryptedJWT(userID, params.UserCookieTTL, params.EncryptingKey, params.SigningKey)
+				if err != nil {
+					logger.Log.Error("JWT encrypting failed", zap.Error(err))
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+
+				http.SetCookie(w, &http.Cookie{
+					Name:     params.UserCookieName,
+					Value:    responseCookieValue,
+					Path:     "/",
+					Expires:  time.Now().Add(params.UserCookieTTL),
+					HttpOnly: true,         // Устанавливаем HttpOnly как рекомендацию по безопасности
+					Secure:   r.TLS != nil, // Устанавливаем Secure только для HTTPS
+					SameSite: http.SameSiteStrictMode,
+				})
+			} else {
+				// userID содержит непустое значение. Проверим его
+				found, err := storage.CheckUserExists(r.Context(), userID)
+				if err != nil {
+					logger.Log.Error("user check in storage failed", zap.Error(err))
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				if !found {
+					// Если кука присутствует в запросе, но не содержит ID пользователя,
+					// то возвращаем HTTP-статус 401 Unauthorized
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+			}
+
+			ctx := context.WithValue(r.Context(), params.userIDKey, userID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
 }
