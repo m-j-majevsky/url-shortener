@@ -2,7 +2,6 @@ package config
 
 import (
 	"flag"
-	"fmt"
 	"os"
 	"time"
 
@@ -58,13 +57,17 @@ func LoadApplicationConfig() (ApplicationConfig, error) {
 	if envSigningKey := []byte(os.Getenv("SIGNING_KEY")); len(envSigningKey) != 0 {
 		appConfig.SigningKey = envSigningKey
 	} else {
-		return ApplicationConfig{}, fmt.Errorf("не задана переменная среды SIGNING_KEY")
+		// Т.к. автотесты на платформе должны стартовать со значениями по умолчанию,
+		// пока также добавлю ветвь с установкой ключа в явном виде
+		appConfig.SigningKey = []byte("jwt-signing-super-secret")
 	}
 
 	if envEncryptingKey := []byte(os.Getenv("ENCRYPTING_KEY")); len(envEncryptingKey) == 32 {
 		appConfig.EncryptingKey = envEncryptingKey
 	} else {
-		return ApplicationConfig{}, fmt.Errorf("должна быть задана переменная среды ENCRYPTING_KEY размером 32 байта")
+		// Т.к. автотесты на платформе должны стартовать со значениями по умолчанию,
+		// пока также добавлю ветвь с установкой ключа в явном виде
+		appConfig.EncryptingKey = []byte("amustbe32byteslongsecretkey26.!?")
 	}
 
 	if envTickPeriod := os.Getenv("SAVE_STATE_INTERVAL"); envTickPeriod != "" {
