@@ -141,7 +141,7 @@ func GzipMiddleware(h http.Handler) http.Handler {
 }
 
 func isValidRequestContentType(ct string) bool {
-	return ct == TextPlain || ct == AppJson
+	return ct == TextPlain || ct == AppJSON
 }
 
 // Функциональность установки-извлечения cookie с ID пользователя

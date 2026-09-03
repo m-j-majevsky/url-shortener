@@ -62,9 +62,9 @@ func DefaultShortenerConfig() ShortenerConfig {
 		BytesToGenerate:           6,
 		MaxGeneratingAttempts:     10,
 		MaxStoringAttempts:        10,
-		DeletionQueueBuffer:       4,
-		DeletionBatchSize:         2,
-		DeletionQueueFlushTimeout: 500 * time.Millisecond,
+		DeletionQueueBuffer:       1024,
+		DeletionBatchSize:         1024,
+		DeletionQueueFlushTimeout: 10 * time.Second,
 	}
 }
 
@@ -342,7 +342,7 @@ func (s *Shortener) restoreWithError(ctx context.Context, toRollback repository.
 		sc, ok := s.Config.Storage.(StorageCleaner)
 		if !ok {
 			// Серьезная ошибка
-			errs = append(errs, fmt.Errorf("Невозможно получить доступ к методу зачистки мусора из хранилища"))
+			errs = append(errs, fmt.Errorf("невозможно получить доступ к методу зачистки мусора из хранилища"))
 		}
 
 		rollbackErr := sc.DeleteByTokens(ctx, tokens)
@@ -477,10 +477,10 @@ func (e *ErrTokenLeftUndeleted) Error() string {
 	return fmt.Sprintf("токен %v пользователя %v не был добавлен в очередь на удаление", e.Token, e.UserID)
 }
 
-func NewErrTokenLeftUndeleted(token, userId string) error {
+func NewErrTokenLeftUndeleted(token, userID string) error {
 	return &ErrTokenLeftUndeleted{
 		Token:  token,
-		UserID: userId,
+		UserID: userID,
 	}
 }
 

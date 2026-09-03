@@ -257,7 +257,7 @@ func isErrAutoRedirectDisabled(err error) bool {
 	return strings.HasSuffix(err.Error(), resty.ErrAutoRedirectDisabled.Error())
 }
 
-func (s *RouterTestSuite) TestWebhook_shortenLongURLForJson() {
+func (s *RouterTestSuite) TestWebhook_shortenLongURLForJSON() {
 	cfg := MakeTestApplicationConfig()
 	cfg.ServiceConfig.Storage = s.storage
 	svc, err := service.NewShortener(cfg.ServiceConfig)
@@ -274,59 +274,59 @@ func (s *RouterTestSuite) TestWebhook_shortenLongURLForJson() {
 	s.T().Run("валидные данные (запрос application/json)", func(t *testing.T) {
 		body, err := json.Marshal(model.ShortenReq{URL: "http://another.good.url.ru"})
 		require.NoError(t, err)
-		resp := s.postApiShorten(t, ts.URL, handler.AppJson, body)
+		resp := s.postAPIShorten(t, ts.URL, handler.AppJSON, body)
 		assert.Equal(t, http.StatusCreated, resp.StatusCode())
-		assert.Equal(t, handler.AppJson, resp.Header().Get(handler.ContentType))
+		assert.Equal(t, handler.AppJSON, resp.Header().Get(handler.ContentType))
 		require.NotNil(t, resp.Body)
 		rb := io.NopCloser(bytes.NewReader(resp.Body()))
-		var rbJson model.ShortenRes
-		err = json.NewDecoder(rb).Decode(&rbJson)
+		var rbJSON model.ShortenRes
+		err = json.NewDecoder(rb).Decode(&rbJSON)
 		require.NoError(t, err)
-		condition := strings.HasPrefix(rbJson.Result, cfg.TargetBaseURL)
+		condition := strings.HasPrefix(rbJSON.Result, cfg.TargetBaseURL)
 		assert.True(t, condition, "Тело ответа не совпадает с ожидаемым")
 	})
 
 	s.T().Run("валидные данные, но кофликт в исходном URL (запрос application/json)", func(t *testing.T) {
 		body, err := json.Marshal(model.ShortenReq{URL: yandexLongURL})
 		require.NoError(t, err)
-		resp := s.postApiShorten(t, ts.URL, handler.AppJson, body)
+		resp := s.postAPIShorten(t, ts.URL, handler.AppJSON, body)
 		assert.Equal(t, http.StatusConflict, resp.StatusCode())
-		assert.Equal(t, handler.AppJson, resp.Header().Get(handler.ContentType))
+		assert.Equal(t, handler.AppJSON, resp.Header().Get(handler.ContentType))
 		require.NotNil(t, resp.Body)
 		rb := io.NopCloser(bytes.NewReader(resp.Body()))
-		var rbJson model.ShortenRes
-		err = json.NewDecoder(rb).Decode(&rbJson)
+		var rbJSON model.ShortenRes
+		err = json.NewDecoder(rb).Decode(&rbJSON)
 		require.NoError(t, err)
-		condition := strings.HasPrefix(rbJson.Result, cfg.TargetBaseURL)
+		condition := strings.HasPrefix(rbJSON.Result, cfg.TargetBaseURL)
 		assert.True(t, condition, "Тело ответа не совпадает с ожидаемым")
 	})
 
 	s.T().Run("неверный Content Type", func(t *testing.T) {
 		body, err := json.Marshal(model.ShortenReq{URL: yandexLongURL})
 		require.NoError(t, err)
-		resp := s.postApiShorten(t, ts.URL, handler.TextPlain, body)
+		resp := s.postAPIShorten(t, ts.URL, handler.TextPlain, body)
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode())
 	})
 
 	s.T().Run("невалидный json в теле запроса", func(t *testing.T) {
-		resp := s.postApiShorten(t, ts.URL, handler.AppJson, []byte("{"))
+		resp := s.postAPIShorten(t, ts.URL, handler.AppJSON, []byte("{"))
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode())
 	})
 
 	s.T().Run("нет поля url в теле запроса", func(t *testing.T) {
-		resp := s.postApiShorten(t, ts.URL, handler.AppJson, []byte("{}"))
+		resp := s.postAPIShorten(t, ts.URL, handler.AppJSON, []byte("{}"))
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode())
 	})
 
 	s.T().Run("в теле запроса в поле url записан не URL", func(t *testing.T) {
 		body, err := json.Marshal(model.ShortenReq{URL: "not-a-url"})
 		require.NoError(t, err)
-		resp := s.postApiShorten(t, ts.URL, handler.AppJson, body)
+		resp := s.postAPIShorten(t, ts.URL, handler.AppJSON, body)
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode())
 	})
 }
 
-func (s *RouterTestSuite) postApiShorten(t *testing.T, baseURL string, contentType string, body []byte) *resty.Response {
+func (s *RouterTestSuite) postAPIShorten(t *testing.T, baseURL string, contentType string, body []byte) *resty.Response {
 	req := resty.New().SetRedirectPolicy(resty.NoRedirectPolicy()).R()
 	req.Method = http.MethodPost
 	req.Header.Set(handler.ContentType, contentType)
@@ -397,7 +397,7 @@ func (s *RouterTestSuite) TestWebhook_shortenBatch_Success() {
 
 	req := resty.New().SetRedirectPolicy(resty.NoRedirectPolicy()).R()
 	req.Method = http.MethodPost
-	req.Header.Set(handler.ContentType, handler.AppJson)
+	req.Header.Set(handler.ContentType, handler.AppJSON)
 	req.Header.Set("Accept-Encoding", "")
 	req.URL = ts.URL + "/api/shorten/batch"
 	req.Body = io.NopCloser(bytes.NewReader(body))
@@ -409,14 +409,14 @@ func (s *RouterTestSuite) TestWebhook_shortenBatch_Success() {
 	)
 
 	assert.Equal(s.T(), http.StatusCreated, resp.StatusCode())
-	assert.Equal(s.T(), handler.AppJson, resp.Header().Get(handler.ContentType))
+	assert.Equal(s.T(), handler.AppJSON, resp.Header().Get(handler.ContentType))
 	require.NotNil(s.T(), resp.Body)
 
 	rb := io.NopCloser(bytes.NewReader(resp.Body()))
-	var rbJson model.BatchShortenRes
-	err = json.NewDecoder(rb).Decode(&rbJson)
+	var rbJSON model.BatchShortenRes
+	err = json.NewDecoder(rb).Decode(&rbJSON)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), rbJson, len(batchRes))
+	require.Len(s.T(), rbJSON, len(batchRes))
 
 	svc.AssertExpectations(s.T())
 	assert.NoError(s.T(), connMock.ExpectationsWereMet())
@@ -476,7 +476,7 @@ func (s *RouterTestSuite) TestWebhook_shortenBatch_Success_With_Conflict_On_URL(
 
 	req := resty.New().SetRedirectPolicy(resty.NoRedirectPolicy()).R()
 	req.Method = http.MethodPost
-	req.Header.Set(handler.ContentType, handler.AppJson)
+	req.Header.Set(handler.ContentType, handler.AppJSON)
 	req.Header.Set("Accept-Encoding", "")
 	req.URL = ts.URL + "/api/shorten/batch"
 	req.Body = io.NopCloser(bytes.NewReader(body))
@@ -488,14 +488,14 @@ func (s *RouterTestSuite) TestWebhook_shortenBatch_Success_With_Conflict_On_URL(
 	)
 
 	assert.Equal(s.T(), http.StatusConflict, resp.StatusCode())
-	assert.Equal(s.T(), handler.AppJson, resp.Header().Get(handler.ContentType))
+	assert.Equal(s.T(), handler.AppJSON, resp.Header().Get(handler.ContentType))
 	require.NotNil(s.T(), resp.Body)
 
 	rb := io.NopCloser(bytes.NewReader(resp.Body()))
-	var rbJson model.BatchShortenRes
-	err = json.NewDecoder(rb).Decode(&rbJson)
+	var rbJSON model.BatchShortenRes
+	err = json.NewDecoder(rb).Decode(&rbJSON)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), rbJson, len(batchRes))
+	require.Len(s.T(), rbJSON, len(batchRes))
 
 	svc.AssertExpectations(s.T())
 	assert.NoError(s.T(), connMock.ExpectationsWereMet())
@@ -530,7 +530,7 @@ func (s *RouterTestSuite) TestGzipCompression() {
 
 		r := httptest.NewRequest("POST", ts.URL+"/api/shorten", buf)
 		r.RequestURI = ""
-		r.Header.Set(handler.ContentType, handler.AppJson)
+		r.Header.Set(handler.ContentType, handler.AppJSON)
 		r.Header.Set("Content-Encoding", "gzip")
 		r.Header.Set("Accept-Encoding", "")
 
@@ -549,7 +549,7 @@ func (s *RouterTestSuite) TestGzipCompression() {
 		buf := bytes.NewBufferString(requestBody)
 		r := httptest.NewRequest("POST", ts.URL+"/api/shorten", buf)
 		r.RequestURI = ""
-		r.Header.Set(handler.ContentType, handler.AppJson)
+		r.Header.Set(handler.ContentType, handler.AppJSON)
 		r.Header.Set("Accept-Encoding", "gzip")
 
 		resp, err := http.DefaultClient.Do(r)
@@ -675,14 +675,14 @@ func (s *RouterTestSuite) TestWebhook_getUserURLs() {
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, resp.StatusCode())
 
-		assert.Equal(t, handler.AppJson, resp.Header().Get(handler.ContentType))
+		assert.Equal(t, handler.AppJSON, resp.Header().Get(handler.ContentType))
 		require.NotNil(t, resp.Body)
 
 		rb := io.NopCloser(bytes.NewReader(resp.Body()))
-		var rbJson model.UserURLsRes
-		err = json.NewDecoder(rb).Decode(&rbJson)
+		var rbJSON model.UserURLsRes
+		err = json.NewDecoder(rb).Decode(&rbJSON)
 		require.NoError(t, err)
-		require.Len(t, rbJson, len(resURLs))
+		require.Len(t, rbJSON, len(resURLs))
 	})
 
 	svc.AssertExpectations(s.T())
@@ -721,7 +721,7 @@ func (s *RouterTestSuite) TestWebhook_markUserURLsDeleted() {
 
 	req := resty.New().SetRedirectPolicy(resty.NoRedirectPolicy()).R()
 	req.Method = http.MethodDelete
-	req.Header.Set(handler.ContentType, handler.AppJson)
+	req.Header.Set(handler.ContentType, handler.AppJSON)
 	req.Header.Set("Accept-Encoding", "")
 	req.URL = ts.URL + "/api/user/urls"
 	req.Body = io.NopCloser(bytes.NewReader(body))
@@ -733,7 +733,7 @@ func (s *RouterTestSuite) TestWebhook_markUserURLsDeleted() {
 	)
 
 	assert.Equal(s.T(), http.StatusAccepted, resp.StatusCode())
-	assert.Equal(s.T(), handler.AppJson, resp.Header().Get(handler.ContentType))
+	assert.Equal(s.T(), handler.AppJSON, resp.Header().Get(handler.ContentType))
 
 	svc.AssertExpectations(s.T())
 	assert.NoError(s.T(), connMock.ExpectationsWereMet())

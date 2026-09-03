@@ -23,7 +23,7 @@ import (
 
 const (
 	ContentType = "Content-Type"
-	AppJson     = "application/json"
+	AppJSON     = "application/json"
 	TextPlain   = "text/plain"
 
 	pingPath = "/ping"
@@ -153,7 +153,7 @@ func NewRouter(params RouterParams) (*Router, error) {
 	// JSON API
 	cr.Route("/api", func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
-			return responseContentTypeMiddleware(next, AppJson)
+			return responseContentTypeMiddleware(next, AppJSON)
 		})
 		r.Use(CookieMiddleware(us, params.UserCookie))
 
@@ -162,7 +162,7 @@ func NewRouter(params RouterParams) (*Router, error) {
 			rr.Delete("/", mux.markUserURLsDeleted)
 		})
 
-		r.Post("/shorten", mux.shortenLongURLForJson)
+		r.Post("/shorten", mux.shortenLongURLForJSON)
 		r.Post("/shorten/batch", mux.shortenBatch)
 	})
 
@@ -337,7 +337,7 @@ func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) 
 
 // Путь "/api/shorten", POST
 
-func (rt *Router) shortenLongURLForJson(w http.ResponseWriter, r *http.Request) {
+func (rt *Router) shortenLongURLForJSON(w http.ResponseWriter, r *http.Request) {
 	userID, ok := rt.getUserIDFromContext(r.Context())
 	if !ok {
 		logger.Log.Debug(fmt.Sprintf("empty %v extracted from request context", rt.userIDKey))
@@ -345,7 +345,7 @@ func (rt *Router) shortenLongURLForJson(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if rct := r.Header.Get(ContentType); rct != AppJson {
+	if rct := r.Header.Get(ContentType); rct != AppJSON {
 		logger.Log.Debug("wrong request Content-Type: " + rct)
 		http.Error(w, "ожидается запрос с заголовком Content-Type: application/json", http.StatusBadRequest)
 		return
@@ -403,7 +403,7 @@ func (rt *Router) shortenBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if rct := r.Header.Get(ContentType); rct != AppJson {
+	if rct := r.Header.Get(ContentType); rct != AppJSON {
 		logger.Log.Debug("wrong request Content-Type: " + rct)
 		http.Error(w, "ожидается запрос с заголовком Content-Type: application/json", http.StatusBadRequest)
 		return
@@ -521,7 +521,7 @@ func (rt *Router) markUserURLsDeleted(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if rct := r.Header.Get(ContentType); rct != AppJson {
+	if rct := r.Header.Get(ContentType); rct != AppJSON {
 		logger.Log.Debug("wrong request Content-Type: " + rct)
 		http.Error(w, "ожидается запрос с заголовком Content-Type: application/json", http.StatusBadRequest)
 		return

@@ -70,9 +70,9 @@ func TestPgStorage_Resolve_Success(t *testing.T) {
 		WithArgs(tok).
 		WillReturnRows(rows)
 
-	arUrl, err := repo.Resolve(t.Context(), tok)
+	arURL, err := repo.Resolve(t.Context(), tok)
 	require.NoError(t, err)
-	assert.Equal(t, arUrl, url)
+	assert.Equal(t, arURL, url)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 

@@ -31,10 +31,10 @@ var (
 	deletedToken = "s8y7adb3"
 )
 
-func (s *MapBasedDBTestSuite) SetupTest() {
-	s.storage = NewLocalStorage()
-	if err := s.storage.Store(context.Background(), yandexToken, yandexURL, userID); err != nil {
-		s.T().Fatalf("Ошибка подготовки тестовых данных: %s", err.Error())
+func (suite *MapBasedDBTestSuite) SetupTest() {
+	suite.storage = NewLocalStorage()
+	if err := suite.storage.Store(context.Background(), yandexToken, yandexURL, userID); err != nil {
+		suite.T().Fatalf("Ошибка подготовки тестовых данных: %s", err.Error())
 	}
 }
 
@@ -390,75 +390,75 @@ func (suite *MapBasedDBTestSuite) TestDeleteByTokens_Errors() {
 
 // CheckUserExists
 
-func (s *MapBasedDBTestSuite) TestCheckUserExists_UserNotExists() {
-	exists, err := s.storage.CheckUserExists(context.Background(), "non-existent-user")
-	s.Require().NoError(err)
-	s.False(exists)
+func (suite *MapBasedDBTestSuite) TestCheckUserExists_UserNotExists() {
+	exists, err := suite.storage.CheckUserExists(context.Background(), "non-existent-user")
+	suite.Require().NoError(err)
+	suite.False(exists)
 }
 
-func (s *MapBasedDBTestSuite) TestCheckUserExists_UserExists() {
+func (suite *MapBasedDBTestSuite) TestCheckUserExists_UserExists() {
 	// Создаем пользователя
-	uid, err := s.storage.CreateUser(context.Background())
-	s.Require().NoError(err)
+	uid, err := suite.storage.CreateUser(context.Background())
+	suite.Require().NoError(err)
 
-	exists, err := s.storage.CheckUserExists(context.Background(), uid)
-	s.Require().NoError(err)
-	s.True(exists)
+	exists, err := suite.storage.CheckUserExists(context.Background(), uid)
+	suite.Require().NoError(err)
+	suite.True(exists)
 }
 
 // CreateUser
 
-func (s *MapBasedDBTestSuite) TestCreateUser() {
-	uid, err := s.storage.CreateUser(context.Background())
-	s.Require().NoError(err)
-	s.NotEmpty(uid)
+func (suite *MapBasedDBTestSuite) TestCreateUser() {
+	uid, err := suite.storage.CreateUser(context.Background())
+	suite.Require().NoError(err)
+	suite.NotEmpty(uid)
 
 	// Проверяем, что пользователь создался
-	exists, err := s.storage.CheckUserExists(context.Background(), uid)
-	s.Require().NoError(err)
-	s.True(exists)
+	exists, err := suite.storage.CheckUserExists(context.Background(), uid)
+	suite.Require().NoError(err)
+	suite.True(exists)
 }
 
 // ListUserURLs
 
-func (s *MapBasedDBTestSuite) TestListUserURLs_EmptyUser() {
+func (suite *MapBasedDBTestSuite) TestListUserURLs_EmptyUser() {
 	// Создаем нового пользователя без URL
-	uid, err := s.storage.CreateUser(context.Background())
-	s.Require().NoError(err)
+	uid, err := suite.storage.CreateUser(context.Background())
+	suite.Require().NoError(err)
 
-	urls, err := s.storage.ListUserURLs(context.Background(), uid)
-	s.Require().NoError(err)
-	s.Empty(urls)
+	urls, err := suite.storage.ListUserURLs(context.Background(), uid)
+	suite.Require().NoError(err)
+	suite.Empty(urls)
 }
 
-func (s *MapBasedDBTestSuite) TestListUserURLs_ExistingUser() {
+func (suite *MapBasedDBTestSuite) TestListUserURLs_ExistingUser() {
 	// Проверяем, что тестовые данные из SetupTest() корректно возвращаются
-	urls, err := s.storage.ListUserURLs(context.Background(), userID)
-	s.Require().NoError(err)
-	s.Len(urls, 1)
+	urls, err := suite.storage.ListUserURLs(context.Background(), userID)
+	suite.Require().NoError(err)
+	suite.Len(urls, 1)
 
-	s.Equal(yandexToken, urls[0].ShortURL)
-	s.Equal(yandexURL, urls[0].OriginalURL)
+	suite.Equal(yandexToken, urls[0].ShortURL)
+	suite.Equal(yandexURL, urls[0].OriginalURL)
 }
 
-func (s *MapBasedDBTestSuite) TestListUserURLs_NonExistentUser() {
-	urls, err := s.storage.ListUserURLs(context.Background(), "non-existent-user")
-	s.Require().NoError(err)
-	s.Empty(urls)
+func (suite *MapBasedDBTestSuite) TestListUserURLs_NonExistentUser() {
+	urls, err := suite.storage.ListUserURLs(context.Background(), "non-existent-user")
+	suite.Require().NoError(err)
+	suite.Empty(urls)
 }
 
-func (s *MapBasedDBTestSuite) TestListUserURLs_MultipleURLs() {
+func (suite *MapBasedDBTestSuite) TestListUserURLs_MultipleURLs() {
 	// Добавляем несколько URL для пользователя
-	if err := s.storage.Store(context.Background(), mailToken, mailURL, userID); err != nil {
-		s.Fail("Ошибка при сохранении mailURL")
+	if err := suite.storage.Store(context.Background(), mailToken, mailURL, userID); err != nil {
+		suite.Fail("Ошибка при сохранении mailURL")
 	}
-	if err := s.storage.Store(context.Background(), goToken, goURL, userID); err != nil {
-		s.Fail("Ошибка при сохранении goURL")
+	if err := suite.storage.Store(context.Background(), goToken, goURL, userID); err != nil {
+		suite.Fail("Ошибка при сохранении goURL")
 	}
 
-	urls, err := s.storage.ListUserURLs(context.Background(), userID)
-	s.Require().NoError(err)
-	s.Len(urls, 3) // Yandex + Mail + Go
+	urls, err := suite.storage.ListUserURLs(context.Background(), userID)
+	suite.Require().NoError(err)
+	suite.Len(urls, 3) // Yandex + Mail + Go
 
 	// Проверяем наличие всех URL
 	foundYandex := false
@@ -476,14 +476,14 @@ func (s *MapBasedDBTestSuite) TestListUserURLs_MultipleURLs() {
 		}
 	}
 
-	s.True(foundYandex)
-	s.True(foundMail)
-	s.True(foundGo)
+	suite.True(foundYandex)
+	suite.True(foundMail)
+	suite.True(foundGo)
 }
 
 // MarkUserURLsDeleted
 
-func (s *MapBasedDBTestSuite) TestMarkUserURLsDeleted() {
+func (suite *MapBasedDBTestSuite) TestMarkUserURLsDeleted() {
 	// Контекст:
 	// (yandexToken -> yandexURL) уже лежат в хранилище;
 	// токен yandexToken принадлежит пользователю userID;
@@ -496,18 +496,18 @@ func (s *MapBasedDBTestSuite) TestMarkUserURLsDeleted() {
 	})
 
 	// Удаление отрабатывает без ошибок
-	s.Require().NoError(s.storage.MarkUserURLsDeleted(context.Background(), batch))
+	suite.Require().NoError(suite.storage.MarkUserURLsDeleted(context.Background(), batch))
 
 	// Resolve ранее удаленного токена возвращает пустой URL и ошибку ErrTokenIsDeleted
-	url, err := s.storage.Resolve(context.Background(), yandexToken)
-	s.Assert().Empty(url)
+	url, err := suite.storage.Resolve(context.Background(), yandexToken)
+	suite.Assert().Empty(url)
 	var errTID *ErrTokenIsDeleted
-	s.ErrorAs(err, &errTID)
+	suite.ErrorAs(err, &errTID)
 
 	// Повторное удаление походит без ошибок
-	s.Require().NoError(s.storage.MarkUserURLsDeleted(context.Background(), batch))
+	suite.Require().NoError(suite.storage.MarkUserURLsDeleted(context.Background(), batch))
 	// И не меняет данных в хранилище
-	url, err = s.storage.Resolve(context.Background(), yandexToken)
-	s.Assert().Empty(url)
-	s.ErrorAs(err, &errTID)
+	url, err = suite.storage.Resolve(context.Background(), yandexToken)
+	suite.Assert().Empty(url)
+	suite.ErrorAs(err, &errTID)
 }

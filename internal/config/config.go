@@ -42,8 +42,8 @@ func LoadApplicationConfig() (ApplicationConfig, error) {
 		appConfig.ServerRunAddress = envServAddr
 	}
 
-	if envBaseUrl := os.Getenv("BASE_URL"); envBaseUrl != "" {
-		appConfig.TargetBaseURL = envBaseUrl
+	if envBaseURL := os.Getenv("BASE_URL"); envBaseURL != "" {
+		appConfig.TargetBaseURL = envBaseURL
 	}
 
 	if envDatabaseDSN := os.Getenv("DATABASE_DSN"); envDatabaseDSN != "" {

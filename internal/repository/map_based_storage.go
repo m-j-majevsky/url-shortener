@@ -28,7 +28,7 @@ type (
 		UUID        string `json:"uuid"`
 		ShortURL    string `json:"short_url"`
 		OriginalURL string `json:"original_url"`
-		UserID      string `json:"user_id"`
+		UserID      string `json:"userID"`
 	}
 
 	storageRepr []itemRepr
@@ -55,7 +55,7 @@ func NewLocalStorage() *LocalStorage {
 
 func (s *LocalStorage) exportRepr() storageRepr {
 	result := make(storageRepr, len(s.data))
-	var idx int = 1
+	idx := 1
 	for su, ou := range s.data {
 		uid := s.findUserByToken(su)
 		result[idx-1] = itemRepr{
@@ -137,27 +137,27 @@ func (s *LocalStorage) deleteTokenFromUsers(token string) {
 	}
 }
 
-func (s *LocalStorage) deleteUsersToken(user_id, tok string) {
+func (s *LocalStorage) deleteUsersToken(userID, tok string) {
 	// Вызывается в контексте уже захваченного s.mu
 
 	// Ищем индекс значения в слайсе
-	ts := s.users[user_id]
+	ts := s.users[userID]
 	for i, t := range ts {
 		if t == tok {
 			// Сдвигаем элементы влево
 			copy(ts[i:], ts[i+1:])
 			// Обрезаем слайс
-			s.users[user_id] = ts[:len(ts)-1]
+			s.users[userID] = ts[:len(ts)-1]
 			// Если слайс стал пустым, оставляем его для дальнейшего
 			return
 		}
 	}
 }
 
-func (s *LocalStorage) isTokenBelongsToUser(tok, user_id string) bool {
+func (s *LocalStorage) isTokenBelongsToUser(tok, userID string) bool {
 	// Вызывается в контексте уже захваченного s.mu
 
-	toks, userExists := s.users[user_id]
+	toks, userExists := s.users[userID]
 	if !userExists {
 		return false
 	}
@@ -337,8 +337,8 @@ func (s *LocalStorage) MarkUserURLsDeleted(_ context.Context, batch ToMarkDelete
 	for _, it := range batch {
 		user, token := it.UserID, it.Token
 
-		url, foundUrl := s.data[token]
-		if !foundUrl || url == isDeleted {
+		url, foundURL := s.data[token]
+		if !foundURL || url == isDeleted {
 			continue
 		}
 
