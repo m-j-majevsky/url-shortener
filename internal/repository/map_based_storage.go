@@ -34,6 +34,10 @@ type (
 	storageRepr []itemRepr
 )
 
+const (
+	isDeleted = ""
+)
+
 func newTokenToURL() TokenToURL {
 	return make(map[string]string)
 }
@@ -125,23 +129,46 @@ func (s *LocalStorage) addTokenToUser(tok, uid string) {
 	s.users[uid] = append(s.users[uid], tok)
 }
 
-func (s *LocalStorage) deleteTokenFromUsers(tok string) {
+func (s *LocalStorage) deleteTokenFromUsers(token string) {
 	// Вызывается в контексте уже захваченного s.mu
 
-	// Проверяем каждого юзера из хранилища
-	for u, ts := range s.users {
-		// Ищем индекс значения в слайсе
-		for i, t := range ts {
-			if t == tok {
-				// Сдвигаем элементы влево
-				copy(ts[i:], ts[i+1:])
-				// Обрезаем слайс
-				s.users[u] = ts[:len(ts)-1]
-				// Если слайс стал пустым, оставляем его для дальнейшего
-				return
-			}
+	for user := range s.users {
+		s.deleteUsersToken(user, token)
+	}
+}
+
+func (s *LocalStorage) deleteUsersToken(user_id, tok string) {
+	// Вызывается в контексте уже захваченного s.mu
+
+	// Ищем индекс значения в слайсе
+	ts := s.users[user_id]
+	for i, t := range ts {
+		if t == tok {
+			// Сдвигаем элементы влево
+			copy(ts[i:], ts[i+1:])
+			// Обрезаем слайс
+			s.users[user_id] = ts[:len(ts)-1]
+			// Если слайс стал пустым, оставляем его для дальнейшего
+			return
 		}
 	}
+}
+
+func (s *LocalStorage) isTokenBelongsToUser(tok, user_id string) bool {
+	// Вызывается в контексте уже захваченного s.mu
+
+	toks, userExists := s.users[user_id]
+	if !userExists {
+		return false
+	}
+
+	for _, t := range toks {
+		if t == tok {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Загружает данные из JSON-файла и заменяет ими текущее содержимое data.
@@ -164,6 +191,7 @@ func (s *LocalStorage) LoadFromFile(path string) error {
 }
 
 // Сохраняет longURL под токеном. Возвращает ErrTokenTaken, если токен занят.
+// Вызывающий код должен гарантировать отсутствие пустых token или longURL.
 func (s *LocalStorage) Store(_ context.Context, token, longURL, userID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -195,14 +223,18 @@ func (s *LocalStorage) Resolve(_ context.Context, token string) (string, error) 
 	if !ok {
 		return "", NewErrTokenNotFound(token)
 	}
+	if url == isDeleted {
+		return "", NewErrTokenIsDeleted(token)
+	}
 	return url, nil
 }
 
 // Важно:
-// Гарантировать уникальность Batch.Token среди элемемнов параметра batch,
+// Гарантировать уникальность StoreBatch.Token среди элемемнов параметра batch,
+// а также гарантировать остутствие пустых StoreBatch.Token или StoreBatch.OriginalURL,
 // это ответсвенность вызывающего кода!
-func (s *LocalStorage) BatchStore(_ context.Context, batch Batch, userID string) (Batch, error) {
-	result := make(Batch, len(batch))
+func (s *LocalStorage) BatchStore(_ context.Context, batch StoreBatch, userID string) (StoreBatch, error) {
+	result := make(StoreBatch, len(batch))
 	copy(result, batch)
 
 	s.mu.Lock()
@@ -287,7 +319,7 @@ func (s *LocalStorage) ListUserURLs(_ context.Context, userID string) (model.Use
 
 	var res model.UserURLsRes
 	for _, tok := range tokens {
-		if url, exists := s.data[tok]; exists {
+		if url, exists := s.data[tok]; exists && url != isDeleted {
 			res = append(res, model.UserURLsResItem{
 				ShortURL:    tok,
 				OriginalURL: url,
@@ -296,4 +328,24 @@ func (s *LocalStorage) ListUserURLs(_ context.Context, userID string) (model.Use
 	}
 
 	return res, nil
+}
+
+func (s *LocalStorage) MarkUserURLsDeleted(_ context.Context, batch ToMarkDeletedReqBatch) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, it := range batch {
+		user, token := it.UserID, it.Token
+
+		url, foundUrl := s.data[token]
+		if !foundUrl || url == isDeleted {
+			continue
+		}
+
+		if s.isTokenBelongsToUser(token, user) {
+			s.deleteUsersToken(user, token)
+			s.data[token] = isDeleted
+		}
+	}
+	return nil
 }

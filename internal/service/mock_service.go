@@ -40,3 +40,13 @@ func (m *MockShortener) ListUserURLs(ctx context.Context, userID string) (model.
 	agrs := m.Called(ctx, userID)
 	return agrs.Get(0).(model.UserURLsRes), agrs.Error(1)
 }
+
+func (m *MockShortener) MarkUserURLsDeleted(ctx context.Context, batch model.TokensToMarkDeleted, userID string) error {
+	agrs := m.Called(ctx, batch, userID)
+	return agrs.Error(0)
+}
+
+func (m *MockShortener) HandleErrTokenLeftUndeletedAndLogData(err error) error {
+	args := m.Called(err)
+	return args.Error(0)
+}

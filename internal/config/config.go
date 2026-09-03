@@ -26,6 +26,10 @@ type ApplicationConfig struct {
 func LoadApplicationConfig() (ApplicationConfig, error) {
 	svcConfig := service.DefaultShortenerConfig()
 
+	// Имя файла для логирования необработанных запросов DELETE /api/user/urls
+	// Задам хардкодом, пока не придумаю подходящее имя флага или переменной
+	svcConfig.DeadLetterLogFile = "emergency_dead_letter.log"
+
 	appConfig := ApplicationConfig{ServiceConfig: svcConfig}
 
 	parseFlags(&appConfig)

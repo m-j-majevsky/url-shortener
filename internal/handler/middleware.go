@@ -3,7 +3,6 @@ package handler
 import (
 	"compress/gzip"
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -166,17 +165,9 @@ func CookieMiddleware(storage UserStorage, params UserCookieParams) func(http.Ha
 				var decryptingErr error
 				userID, decryptingErr = decryptAndParseJWT(cookie.Value, params.EncryptingKey, params.SigningKey)
 				if decryptingErr != nil {
-					var eti *errTokenInvalid
-					if errors.As(decryptingErr, &eti) {
-						// Невалидный токен требует выдачи нового
-						setNewCookie = true
-						// userID остался пуст
-					} else {
-						// Ошибки дешифрования; считаем внутренней ошибкой сервера
-						logger.Log.Error("JWT decrypting failed", zap.Error(decryptingErr))
-						w.WriteHeader(http.StatusInternalServerError)
-						return
-					}
+					// Ошибки парсинга и дешифровки воспринимаем как указание на невалидность токена,
+					// что требует выдачи нового
+					setNewCookie = true
 				} else { // decryptingErr == nil
 					if userID == "" {
 						// Если кука присутствует в запросе, но не содержит ID пользователя,
@@ -213,7 +204,7 @@ func CookieMiddleware(storage UserStorage, params UserCookieParams) func(http.Ha
 					Secure:   r.TLS != nil, // Устанавливаем Secure только для HTTPS
 					SameSite: http.SameSiteStrictMode,
 				})
-			} else {
+			} else { // setNewCookie == false
 				// userID содержит непустое значение. Проверим его
 				found, err := storage.CheckUserExists(r.Context(), userID)
 				if err != nil {

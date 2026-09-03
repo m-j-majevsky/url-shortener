@@ -36,6 +36,7 @@ type URLShortener interface {
 	BatchStore(ctx context.Context, batch model.BatchShortenReq, userID string) (model.BatchShortenRes, error)
 	Resolve(ctx context.Context, token string) (string, error)
 	ListUserURLs(ctx context.Context, userID string) (model.UserURLsRes, error)
+	MarkUserURLsDeleted(ctx context.Context, batch model.TokensToMarkDeleted, userID string) error
 }
 
 type ServiceConfigReader interface {
@@ -49,6 +50,10 @@ type StoragePinger interface {
 type UserStorage interface {
 	CheckUserExists(ctx context.Context, uid string) (bool, error)
 	CreateUser(ctx context.Context) (string, error)
+}
+
+type UndeletedItemsHandler interface {
+	HandleErrTokenLeftUndeletedAndLogData(err error) error
 }
 
 type UserCookieParams struct {
@@ -90,6 +95,7 @@ type Router struct {
 	pinger    StoragePinger
 	baseURL   string
 	userIDKey contextKey
+	uiHandler UndeletedItemsHandler
 }
 
 func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -119,6 +125,11 @@ func NewRouter(params RouterParams) (*Router, error) {
 		return nil, err
 	}
 
+	uih, ok := params.Service.(UndeletedItemsHandler)
+	if !ok {
+		return nil, fmt.Errorf("сервис не поддерживает интерфейс UndeletedItemsHandler")
+	}
+
 	params.UserCookie.userIDKey = contextKey(params.UserCookie.UserCookieName)
 	mux := &Router{
 		mux:       cr,
@@ -126,6 +137,7 @@ func NewRouter(params RouterParams) (*Router, error) {
 		pinger:    getStoragePinger(params.Service),
 		baseURL:   params.BaseURL,
 		userIDKey: params.UserCookie.userIDKey,
+		uiHandler: uih,
 	}
 
 	// Текстовый API
@@ -145,7 +157,10 @@ func NewRouter(params RouterParams) (*Router, error) {
 		})
 		r.Use(CookieMiddleware(us, params.UserCookie))
 
-		r.Get("/user/urls", mux.getUserURLs)
+		r.Route("/user/urls", func(rr chi.Router) {
+			rr.Get("/", mux.getUserURLs)
+			rr.Delete("/", mux.markUserURLsDeleted)
+		})
 
 		r.Post("/shorten", mux.shortenLongURLForJson)
 		r.Post("/shorten/batch", mux.shortenBatch)
@@ -256,8 +271,15 @@ func (rt *Router) resolveShortURL(w http.ResponseWriter, r *http.Request) {
 
 	var etnf *repository.ErrTokenNotFound
 	if errors.As(err, &etnf) {
-		logger.Log.Debug(fmt.Sprintf("token %s not found", token), zap.Error(err))
+		logger.Log.Debug(fmt.Sprintf("token %s not found", token), zap.Error(etnf))
 		http.Error(w, "URL не зарегистрирован", http.StatusBadRequest)
+		return
+	}
+
+	var erid *repository.ErrTokenIsDeleted
+	if errors.As(err, &erid) {
+		logger.Log.Debug(fmt.Sprintf("token %s is deleted", token), zap.Error(erid))
+		http.Error(w, fmt.Sprintf("Токен %s удален", erid.Token), http.StatusGone)
 		return
 	}
 
@@ -487,4 +509,61 @@ func setBaseForUserURLs(baseURL string, res model.UserURLsRes) {
 	for i := range res {
 		res[i].ShortURL = fmt.Sprintf("%s/%s", baseURL, res[i].ShortURL)
 	}
+}
+
+// Путь "/api/user/urls", DELETE
+
+func (rt *Router) markUserURLsDeleted(w http.ResponseWriter, r *http.Request) {
+	userID, ok := rt.getUserIDFromContext(r.Context())
+	if !ok {
+		logger.Log.Debug(fmt.Sprintf("empty %v extracted from request context", rt.userIDKey))
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	if rct := r.Header.Get(ContentType); rct != AppJson {
+		logger.Log.Debug("wrong request Content-Type: " + rct)
+		http.Error(w, "ожидается запрос с заголовком Content-Type: application/json", http.StatusBadRequest)
+		return
+	}
+
+	var batchReq model.TokensToMarkDeleted
+	if err := json.NewDecoder(r.Body).Decode(&batchReq); err != nil {
+		logger.Log.Debug("cannot decode request JSON body", zap.Error(err))
+		http.Error(w, "ожидается валидный JSON с массивом строк в теле запроса", http.StatusBadRequest)
+		return
+	}
+	if err := validateTokensToBeDeleted(batchReq); err != nil {
+		logger.Log.Debug("request validation error", zap.Error(err))
+		http.Error(w, `в теле запроса ожидается JSON c массивом строк из Base62 символов`, http.StatusBadRequest)
+		return
+	}
+
+	if err := rt.service.MarkUserURLsDeleted(r.Context(), batchReq, userID); err != nil {
+		// В вызванном методе возможны ошибки, только если канал для удаления записей переполнен,
+		// и тогда err будет содержать service.ErrTokenLeftUndeleted для каждой непопавшей в канал записи из batchReq.
+
+		logger.Log.Debug("error while deleting data", zap.Error(err))
+
+		// Добавляем в лог неудаленные записи во избежание потери запросов
+		loggingErr := rt.uiHandler.HandleErrTokenLeftUndeletedAndLogData(err)
+		if loggingErr != nil {
+			logger.Log.Error("error while logging undeleted items", zap.Error(loggingErr), zap.String("event", "critical error"))
+		}
+
+		http.Error(w, "Сервер перегружен; запрос на удаление сохранен для последующей обработки", http.StatusAccepted)
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func validateTokensToBeDeleted(batch model.TokensToMarkDeleted) error {
+	for _, item := range batch {
+		if err := enc.IsValidBase62(item); err != nil {
+			logger.Log.Debug("error validating URL token", zap.Error(err))
+			return err
+		}
+	}
+	return nil
 }

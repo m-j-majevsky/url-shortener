@@ -32,10 +32,10 @@ func (m *MockPgStorage) Resolve(ctx context.Context, token string) (string, erro
 	return url, err
 }
 
-func (m *MockPgStorage) BatchStore(ctx context.Context, batch Batch, userID string) (Batch, error) {
+func (m *MockPgStorage) BatchStore(ctx context.Context, batch StoreBatch, userID string) (StoreBatch, error) {
 	args := m.Called(ctx, batch, userID)
 
-	return args.Get(0).(Batch), args.Error(1)
+	return args.Get(0).(StoreBatch), args.Error(1)
 }
 
 func (m *MockPgStorage) DeleteByTokens(ctx context.Context, tokens []string) error {
@@ -60,4 +60,10 @@ func (m *MockPgStorage) ListUserURLs(ctx context.Context, userID string) (model.
 	agrs := m.Called(ctx, userID)
 
 	return agrs.Get(0).(model.UserURLsRes), agrs.Error(1)
+}
+
+func (m *MockPgStorage) MarkUserURLsDeleted(ctx context.Context, batch ToMarkDeletedReqBatch) error {
+	args := m.Called(ctx, batch)
+
+	return args.Error(0)
 }

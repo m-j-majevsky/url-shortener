@@ -7,7 +7,7 @@ import (
 )
 
 type (
-	BatchItem struct {
+	StoreItem struct {
 		CorrelationID   string
 		Token           string
 		OriginalURL     string
@@ -15,13 +15,20 @@ type (
 		ConflictedURL   bool
 	}
 
-	Batch []BatchItem
+	StoreBatch []StoreItem
+
+	ToMarkDeletedReqItem struct {
+		Token  string `json:"token"`
+		UserID string `json:"user_id"`
+	}
+
+	ToMarkDeletedReqBatch []ToMarkDeletedReqItem
 )
 
-// Методы и утилиты для работы с Batch
+// Методы и утилиты для работы с StoreBatch
 
-func NewBatch(req model.BatchShortenReq) Batch {
-	result := make(Batch, len(req))
+func NewStoreBatch(req model.BatchShortenReq) StoreBatch {
+	result := make(StoreBatch, len(req))
 	for i := range req {
 		result[i].CorrelationID = req[i].CorrelationID
 		result[i].OriginalURL = req[i].OriginalURL
@@ -29,7 +36,7 @@ func NewBatch(req model.BatchShortenReq) Batch {
 	return result
 }
 
-func MayBeAddErrors(batch Batch) (Batch, error) {
+func MayBeAddErrors(batch StoreBatch) (StoreBatch, error) {
 	errs := make([]error, 0, len(batch))
 
 	for _, it := range batch {

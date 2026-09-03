@@ -18,6 +18,10 @@ type (
 		StoredToken string
 		URL         string
 	}
+
+	ErrTokenIsDeleted struct {
+		Token string
+	}
 )
 
 // Методы ErrTokenTaken
@@ -55,4 +59,16 @@ func NewErrOriginalURLExists(token, url string) error {
 
 func (e *ErrOriginalURLExists) Error() string {
 	return fmt.Sprintf("URL %s сохранен под токеном %s", e.URL, e.StoredToken)
+}
+
+// Методы ErrTokenIsDeleted
+
+func NewErrTokenIsDeleted(tok string) error {
+	return &ErrTokenIsDeleted{
+		Token: tok,
+	}
+}
+
+func (e *ErrTokenIsDeleted) Error() string {
+	return fmt.Sprintf("токен %s удален", e.Token)
 }

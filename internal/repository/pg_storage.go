@@ -93,12 +93,13 @@ func (s *pgStorage) Store(ctx context.Context, token, longURL, userID string) er
 }
 
 func (s *pgStorage) Resolve(ctx context.Context, token string) (string, error) {
-	const q = `SELECT original_url
+	const q = `SELECT original_url, is_deleted
 	           FROM shorten_urls
 	           WHERE token = $1`
 
 	var url string
-	err := s.db.QueryRow(ctx, q, token).Scan(&url)
+	var isDeleted bool
+	err := s.db.QueryRow(ctx, q, token).Scan(&url, &isDeleted)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", NewErrTokenNotFound(token)
@@ -106,6 +107,10 @@ func (s *pgStorage) Resolve(ctx context.Context, token string) (string, error) {
 
 	if err != nil {
 		return "", fmt.Errorf("ошибка запроса URL по токену %s: %w", token, err)
+	}
+
+	if isDeleted {
+		return "", NewErrTokenIsDeleted(token)
 	}
 
 	return url, nil
@@ -116,21 +121,21 @@ func (s *pgStorage) Ping(ctx context.Context) error {
 }
 
 // Важно:
-// Гарантировать уникальность Batch.Token среди элемемнов параметра batch,
+// Гарантировать уникальность StoreBatch.Token среди элемемнов параметра batch,
 // это ответсвенность вызывающего кода!
-func (s *pgStorage) BatchStore(ctx context.Context, batchReq Batch, userID string) (Batch, error) {
+func (s *pgStorage) BatchStore(ctx context.Context, batchReq StoreBatch, userID string) (StoreBatch, error) {
 	if len(batchReq) == 0 {
-		return Batch{}, nil
+		return StoreBatch{}, nil
 	}
 
 	var userUIID pgtype.UUID
 	if err := userUIID.Scan(userID); err != nil {
-		return Batch{}, fmt.Errorf("неверный формат ID пользователя %q: %w", userID, err)
+		return StoreBatch{}, fmt.Errorf("неверный формат ID пользователя %q: %w", userID, err)
 	}
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return Batch{}, fmt.Errorf("ошибка создания транзакции: %w", err)
+		return StoreBatch{}, fmt.Errorf("ошибка создания транзакции: %w", err)
 	}
 	// Откат по умолчанию, будет перезаписан Commit, если всё ок
 	defer func() { _ = tx.Rollback(ctx) }()
@@ -145,10 +150,10 @@ func (s *pgStorage) BatchStore(ctx context.Context, batchReq Batch, userID strin
 					RETURNING token`
 
 	if _, err = tx.Prepare(ctx, qStoreName, qStore); err != nil {
-		return Batch{}, fmt.Errorf("ошибка подготовки запроса: %w", err)
+		return StoreBatch{}, fmt.Errorf("ошибка подготовки запроса: %w", err)
 	}
 
-	batchRes := make(Batch, len(batchReq))
+	batchRes := make(StoreBatch, len(batchReq))
 	copy(batchRes, batchReq)
 
 	for i := range batchRes {
@@ -168,11 +173,11 @@ func (s *pgStorage) BatchStore(ctx context.Context, batchReq Batch, userID strin
 				}
 
 				// Если вдруг конфликт по другому ограничению, которое мы не ожидали - падаем
-				return Batch{}, fmt.Errorf("неожиданный конфликт ограничения %s: %w", pgErr.ConstraintName, err)
+				return StoreBatch{}, fmt.Errorf("неожиданный конфликт ограничения %s: %w", pgErr.ConstraintName, err)
 			}
 
 			// Прочие ошибки считаем критичными для транзакции
-			return Batch{}, fmt.Errorf("ошибка записи в БД: %w", err)
+			return StoreBatch{}, fmt.Errorf("ошибка записи в БД: %w", err)
 		}
 
 		// Если мы здесь, значит либо INSERT прошел успешно, либо сработал ON CONFLICT (DO UPDATE)
@@ -186,7 +191,7 @@ func (s *pgStorage) BatchStore(ctx context.Context, batchReq Batch, userID strin
 	} // for
 
 	if err := tx.Commit(ctx); err != nil {
-		return Batch{}, fmt.Errorf("ошибка завершения транзакции: %w", err)
+		return StoreBatch{}, fmt.Errorf("ошибка завершения транзакции: %w", err)
 	}
 
 	return MayBeAddErrors(batchRes)
@@ -253,7 +258,7 @@ func (s *pgStorage) CreateUser(ctx context.Context) (string, error) {
 func (s *pgStorage) ListUserURLs(ctx context.Context, userID string) (model.UserURLsRes, error) {
 	const q = `SELECT token, original_url
                FROM shorten_urls
-               WHERE user_id = $1`
+               WHERE user_id = $1 AND is_deleted <> TRUE`
 
 	var userUIID pgtype.UUID
 	if err := userUIID.Scan(userID); err != nil {
@@ -272,4 +277,35 @@ func (s *pgStorage) ListUserURLs(ctx context.Context, userID string) (model.User
 	}
 
 	return userURLs, nil
+}
+
+func (s *pgStorage) MarkUserURLsDeleted(ctx context.Context, batch ToMarkDeletedReqBatch) error {
+	if len(batch) == 0 {
+		return nil
+	}
+
+	var args []any
+	var parts []string
+	var userUIID pgtype.UUID
+
+	for i, u := range batch {
+		idx := i * 2
+		parts = append(parts, fmt.Sprintf("($%d, $%d::uuid)", idx+1, idx+2))
+
+		if err := userUIID.Scan(u.UserID); err != nil {
+			return fmt.Errorf("неверный формат ID пользователя %q: %w", u.UserID, err)
+		}
+		args = append(args, u.Token, userUIID)
+	}
+
+	qMarkDeleted := `UPDATE shorten_urls AS u
+		             SET is_deleted = TRUE
+		             FROM (VALUES ` + strings.Join(parts, ", ") + `) AS v(token, user_id)
+		             WHERE u.token = v.token AND u.user_id = v.user_id`
+
+	if _, err := s.db.Exec(ctx, qMarkDeleted, args...); err != nil {
+		return fmt.Errorf("ошибка выполнения запроса: %w", err)
+	}
+
+	return nil
 }

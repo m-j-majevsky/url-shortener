@@ -1,0 +1,2 @@
+ALTER TABLE shorten_urls 
+ADD COLUMN is_deleted BOOLEAN DEFAULT FALSE;

@@ -27,6 +27,8 @@ var (
 
 	someToken = "0000ZZZZ"
 	someURL   = "https://some.url.ru"
+
+	deletedToken = "s8y7adb3"
 )
 
 func (s *MapBasedDBTestSuite) SetupTest() {
@@ -60,6 +62,23 @@ func (suite *MapBasedDBTestSuite) TestResolve_ErrTokenNotFound() {
 	url, err := suite.storage.Resolve(context.Background(), someToken)
 	var errTNF *ErrTokenNotFound
 	suite.ErrorAs(err, &errTNF)
+	suite.Equal("", url)
+}
+
+func (suite *MapBasedDBTestSuite) TestResolve_ErrTokenIsDeleted() {
+	// Контекст:
+	// (yandexToken -> yandexURL) уже лежат в хранилище;
+	// других данных в нём нет
+
+	// Подготовка
+	if err := suite.storage.Store(context.Background(), deletedToken, isDeleted, userID); err != nil {
+		suite.T().Fatalf("Ошибка подготовки тестовых данных: %s", err.Error())
+	}
+
+	// Прогон
+	url, err := suite.storage.Resolve(context.Background(), deletedToken)
+	var errTID *ErrTokenIsDeleted
+	suite.ErrorAs(err, &errTID)
 	suite.Equal("", url)
 }
 
@@ -131,7 +150,7 @@ func (suite *MapBasedDBTestSuite) TestBatchStore_Success() {
 
 	ctx := context.Background()
 
-	batch := NewBatch(model.BatchShortenReq{})
+	batch := NewStoreBatch(model.BatchShortenReq{})
 
 	// Пустой батч
 	res, err := suite.storage.BatchStore(ctx, batch, userID)
@@ -139,7 +158,7 @@ func (suite *MapBasedDBTestSuite) TestBatchStore_Success() {
 	suite.Assert().Empty(res)
 
 	// Укладка единственного элемента
-	batch = append(batch, BatchItem{
+	batch = append(batch, StoreItem{
 		CorrelationID: "1",
 		Token:         mailToken,
 		OriginalURL:   mailURL,
@@ -151,11 +170,11 @@ func (suite *MapBasedDBTestSuite) TestBatchStore_Success() {
 
 	// Укладка нескольких элементов
 	batch = batch[:0]
-	batch = append(batch, BatchItem{
+	batch = append(batch, StoreItem{
 		CorrelationID: "a",
 		Token:         goToken,
 		OriginalURL:   goURL,
-	}, BatchItem{
+	}, StoreItem{
 		CorrelationID: "b",
 		Token:         someToken,
 		OriginalURL:   someURL,
@@ -167,7 +186,7 @@ func (suite *MapBasedDBTestSuite) TestBatchStore_Success() {
 	suite.checkResItemAndCompare(batch[1], res[1])
 }
 
-func (suite *MapBasedDBTestSuite) checkResItemAndCompare(reqIt BatchItem, resIt BatchItem) {
+func (suite *MapBasedDBTestSuite) checkResItemAndCompare(reqIt StoreItem, resIt StoreItem) {
 	suite.False(resIt.ConflictedToken)
 
 	suite.False(resIt.ConflictedURL)
@@ -184,12 +203,12 @@ func (suite *MapBasedDBTestSuite) TestBatchStore_ErrTokenTaken() {
 
 	ctx := context.Background()
 
-	batch := NewBatch(model.BatchShortenReq{})
-	batch = append(batch, BatchItem{
+	batch := NewStoreBatch(model.BatchShortenReq{})
+	batch = append(batch, StoreItem{
 		CorrelationID: "a",
 		Token:         goToken,
 		OriginalURL:   goURL,
-	}, BatchItem{
+	}, StoreItem{
 		CorrelationID: "b",
 		Token:         yandexToken, // Тут ожидается ErrTokenTaken
 		OriginalURL:   someURL,
@@ -227,12 +246,12 @@ func (suite *MapBasedDBTestSuite) TestBatchStore_ErrOriginalURLExists() {
 
 	ctx := context.Background()
 
-	batch := NewBatch(model.BatchShortenReq{})
-	batch = append(batch, BatchItem{
+	batch := NewStoreBatch(model.BatchShortenReq{})
+	batch = append(batch, StoreItem{
 		CorrelationID: "a",
 		Token:         goToken,
 		OriginalURL:   yandexURL, // Тут ожидается ErrOriginalURLExists
-	}, BatchItem{
+	}, StoreItem{
 		CorrelationID: "b",
 		Token:         someToken,
 		OriginalURL:   someURL,
@@ -270,8 +289,8 @@ func (suite *MapBasedDBTestSuite) TestBatchStore_ErrOriginalURLExists_While_Toke
 
 	ctx := context.Background()
 
-	batch := NewBatch(model.BatchShortenReq{})
-	batch = append(batch, BatchItem{
+	batch := NewStoreBatch(model.BatchShortenReq{})
+	batch = append(batch, StoreItem{
 		CorrelationID: "a",
 		Token:         yandexToken, // Тут мог бы быть ErrTokenTaken, но при успехе его не должно быть
 		OriginalURL:   yandexURL,   // Тут должен быть ErrOriginalURLExists
@@ -338,12 +357,12 @@ func (suite *MapBasedDBTestSuite) TestDeleteByTokens_Some_Items_Success() {
 	ctx := context.Background()
 
 	// Подготовим хранилище, добавив еще две записи
-	batch := NewBatch(model.BatchShortenReq{})
-	batch = append(batch, BatchItem{
+	batch := NewStoreBatch(model.BatchShortenReq{})
+	batch = append(batch, StoreItem{
 		CorrelationID: "a",
 		Token:         goToken,
 		OriginalURL:   goURL,
-	}, BatchItem{
+	}, StoreItem{
 		CorrelationID: "b",
 		Token:         someToken,
 		OriginalURL:   someURL,
@@ -460,4 +479,35 @@ func (s *MapBasedDBTestSuite) TestListUserURLs_MultipleURLs() {
 	s.True(foundYandex)
 	s.True(foundMail)
 	s.True(foundGo)
+}
+
+// MarkUserURLsDeleted
+
+func (s *MapBasedDBTestSuite) TestMarkUserURLsDeleted() {
+	// Контекст:
+	// (yandexToken -> yandexURL) уже лежат в хранилище;
+	// токен yandexToken принадлежит пользователю userID;
+	// других данных в нём нет
+
+	batch := make(ToMarkDeletedReqBatch, 0, 1)
+	batch = append(batch, ToMarkDeletedReqItem{
+		Token:  yandexToken,
+		UserID: userID,
+	})
+
+	// Удаление отрабатывает без ошибок
+	s.Require().NoError(s.storage.MarkUserURLsDeleted(context.Background(), batch))
+
+	// Resolve ранее удаленного токена возвращает пустой URL и ошибку ErrTokenIsDeleted
+	url, err := s.storage.Resolve(context.Background(), yandexToken)
+	s.Assert().Empty(url)
+	var errTID *ErrTokenIsDeleted
+	s.ErrorAs(err, &errTID)
+
+	// Повторное удаление походит без ошибок
+	s.Require().NoError(s.storage.MarkUserURLsDeleted(context.Background(), batch))
+	// И не меняет данных в хранилище
+	url, err = s.storage.Resolve(context.Background(), yandexToken)
+	s.Assert().Empty(url)
+	s.ErrorAs(err, &errTID)
 }

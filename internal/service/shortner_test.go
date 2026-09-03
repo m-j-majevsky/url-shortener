@@ -94,7 +94,7 @@ func (s *ShortenerSuite) TestGenerateTokens_LengthInRange() {
 		s.NoError(err)
 		s.Equal(1, len(tokens))
 		tok := tokens[0]
-		s.True(len(tok) >= s.svc.config.MinTokenLength && len(tok) <= s.svc.config.MaxTokenLength)
+		s.True(len(tok) >= s.svc.Config.MinTokenLength && len(tok) <= s.svc.Config.MaxTokenLength)
 		s.NoError(encoding.IsValidBase62(tok))
 	}
 }
@@ -341,4 +341,29 @@ func (s *ShortenerSuite) TestListUserURLs_Empty_Result() {
 	s.Require().NoError(err)
 	s.NotNil(res)
 	s.Empty(res)
+}
+
+// MarkUserURLsDeleted
+
+func (s *ShortenerSuite) TestMarkUserURLsDeleted_And_Resolve_ErrTokenIsDeleted() {
+	// Контекст:
+	// (userID) и (yandexToken -> yandexURL) уже лежат в хранилище
+	// других данных в нём нет
+
+	// Подготовка данных
+	s.createShotnerInstance(s.storage)
+	toMarkDeleted := repository.ToMarkDeletedReqBatch{
+		repository.ToMarkDeletedReqItem{
+			Token:  yandexToken,
+			UserID: userID,
+		},
+	}
+	if err := s.storage.MarkUserURLsDeleted(s.T().Context(), toMarkDeleted); err != nil {
+		s.T().Fatalf("Ошибка подготовки тестовых данных: %s", err.Error())
+	}
+
+	url, err := s.svc.Resolve(s.T().Context(), yandexToken)
+	var errTID *repository.ErrTokenIsDeleted
+	s.ErrorAs(err, &errTID)
+	s.Equal("", url)
 }

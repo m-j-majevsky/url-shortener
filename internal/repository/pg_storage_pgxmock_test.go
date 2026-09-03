@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"regexp"
 	"testing"
 	"time"
 
@@ -64,8 +65,8 @@ func TestPgStorage_Resolve_Success(t *testing.T) {
 	repo, mock := newMockPgStorage(t)
 	defer mock.Close(t.Context())
 
-	rows := mock.NewRows([]string{"original_url"}).AddRow(url)
-	mock.ExpectQuery(`SELECT original_url FROM shorten_urls WHERE token = \$1`).
+	rows := mock.NewRows([]string{"original_url", "is_deleted"}).AddRow(url, nil)
+	mock.ExpectQuery(`SELECT original_url, is_deleted FROM shorten_urls WHERE token = \$1`).
 		WithArgs(tok).
 		WillReturnRows(rows)
 
@@ -79,13 +80,28 @@ func TestPgStorage_Resolve_ErrTokenNotFound(t *testing.T) {
 	repo, mock := newMockPgStorage(t)
 	defer mock.Close(t.Context())
 
-	mock.ExpectQuery(`SELECT original_url FROM shorten_urls WHERE token = \$1`).
+	mock.ExpectQuery(`SELECT original_url, is_deleted FROM shorten_urls WHERE token = \$1`).
 		WithArgs(tok).
 		WillReturnError(pgx.ErrNoRows)
 
 	_, err := repo.Resolve(t.Context(), tok)
 	var errTNF *ErrTokenNotFound
 	assert.ErrorAs(t, err, &errTNF)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgStorage_Resolve_ErrTokenIsDeleted(t *testing.T) {
+	repo, mock := newMockPgStorage(t)
+	defer mock.Close(t.Context())
+
+	rows := mock.NewRows([]string{"original_url", "is_deleted"}).AddRow(url, true)
+	mock.ExpectQuery(`SELECT original_url, is_deleted FROM shorten_urls WHERE token = \$1`).
+		WithArgs(tok).
+		WillReturnRows(rows)
+
+	_, err := repo.Resolve(t.Context(), tok)
+	var errTID *ErrTokenIsDeleted
+	assert.ErrorAs(t, err, &errTID)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -203,7 +219,7 @@ func TestBatchStore_Empty_Batch(t *testing.T) {
 
 	// Никаких ожиданий не нужно
 
-	out, err := repo.BatchStore(t.Context(), Batch{}, userID)
+	out, err := repo.BatchStore(t.Context(), StoreBatch{}, userID)
 	require.NoError(t, err)
 	assert.Empty(t, out)
 
@@ -228,7 +244,7 @@ func TestBatchStore_All_Success(t *testing.T) {
 	var userUIID pgtype.UUID
 	require.NoError(t, userUIID.Scan(userID))
 
-	batchIn := Batch{
+	batchIn := StoreBatch{
 		{Token: "tok1", OriginalURL: "https://a.com"},
 		{Token: "tok2", OriginalURL: "https://b.com"},
 	}
@@ -271,7 +287,7 @@ func TestBatchStore_ErrOriginalURLExists(t *testing.T) {
 	var userUIID pgtype.UUID
 	require.NoError(t, userUIID.Scan(userID))
 
-	batchIn := Batch{
+	batchIn := StoreBatch{
 		{Token: "tok1", OriginalURL: "https://same.com"},   // уже есть
 		{Token: "tok2", OriginalURL: "https://unique.com"}, // новый
 	}
@@ -332,7 +348,7 @@ func TestBatchStore_ConflictToken(t *testing.T) {
 		           RETURNING token`
 	mock.ExpectPrepare(stmtName, query)
 
-	batchIn := Batch{
+	batchIn := StoreBatch{
 		{Token: "taken-tok", OriginalURL: "https://new-url.com"},
 	}
 
@@ -378,7 +394,7 @@ func TestBatchStore_MixedScenario(t *testing.T) {
 
 	mock.ExpectBegin()
 
-	batchIn := Batch{
+	batchIn := StoreBatch{
 		{Token: "ok1", OriginalURL: "https://ok1.com"},
 		{Token: "conflict-url", OriginalURL: "https://conflict-url.com"},    // конфликт URL
 		{Token: "conflict-token", OriginalURL: "https://new-for-token.com"}, // конфликт токена
@@ -476,7 +492,7 @@ func TestBatchStore_TransactionError(t *testing.T) {
 	var userUIID pgtype.UUID
 	require.NoError(t, userUIID.Scan(userID))
 
-	batchIn := Batch{
+	batchIn := StoreBatch{
 		{Token: "tok", OriginalURL: "https://example.com"},
 	}
 	// Возвращаем какую-то другую ошибку (не 23505), чтобы транзакция упала
@@ -682,6 +698,48 @@ func TestPgStorage_ListUserURLs(t *testing.T) {
 		_, err := repo.ListUserURLs(ctx, "")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "неверный формат ID пользователя")
+	})
+
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+// MarkUserURLsDeleted
+
+func TestPgStorage_MarkUserURLsDeleted(t *testing.T) {
+	// Создаем мок-хранилище
+	repo, mock := newMockPgStorage(t)
+	ctx := context.Background()
+
+	var userUIID pgtype.UUID
+	require.NoError(t, userUIID.Scan(userID))
+
+	// Тест 1: Пустой батч не обрабатывается в хранилище
+	t.Run("Empty batch won't be processed", func(t *testing.T) {
+		err := repo.MarkUserURLsDeleted(ctx, ToMarkDeletedReqBatch{})
+		require.NoError(t, err)
+	})
+
+	// Тест 2: Построение правильного запроса для установки флага is_deleted
+	t.Run("Correct UPDATE queue building", func(t *testing.T) {
+		sql := regexp.QuoteMeta(`UPDATE shorten_urls AS u 
+								 SET is_deleted = TRUE 
+							  	 FROM (VALUES ($1, $2::uuid), ($3, $4::uuid)) AS v(token, user_id) 
+								 WHERE u.token = v.token AND u.user_id = v.user_id`)
+		mock.ExpectExec(sql).
+			WithArgs(tok, userUIID, tok+"W", userUIID).
+			WillReturnResult(pgxmock.NewResult("UPDATE", 2))
+
+		err := repo.MarkUserURLsDeleted(ctx, ToMarkDeletedReqBatch{
+			ToMarkDeletedReqItem{
+				Token:  tok,
+				UserID: userID,
+			},
+			ToMarkDeletedReqItem{
+				Token:  tok + "W",
+				UserID: userID,
+			},
+		})
+		require.NoError(t, err)
 	})
 
 	assert.NoError(t, mock.ExpectationsWereMet())

@@ -11,4 +11,6 @@ type (
 	}
 
 	BatchShortenReq []BatchShortenReqItem
+
+	TokensToMarkDeleted []string
 )

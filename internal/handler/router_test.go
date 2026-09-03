@@ -43,6 +43,7 @@ var (
 	userID        = "8222be97-0266-40d1-b069-54f29508de43"
 	yandexToken   = "0123AbcD"
 	yandexLongURL = "https://yandex.ru"
+	deletedToken  = "QwertY23"
 	secretAESKey  = []byte("amustbe32byteslongsecretkey!!!20")
 	secretJWTKey  = []byte("your-jwt-signing-secret")
 )
@@ -66,6 +67,21 @@ func (s *RouterTestSuite) SetupTest() {
 	if url != yandexLongURL {
 		s.T().Fatal("Ошибка подготовки тестовых данных")
 	}
+
+	if err := s.storage.Store(ctx, deletedToken, "http://to-be-deleted.com", userID); err != nil {
+		s.T().Fatalf("Ошибка подготовки тестовых данных: %v", err)
+	}
+	tdb := repository.ToMarkDeletedReqBatch{
+		repository.ToMarkDeletedReqItem{
+			Token:  deletedToken,
+			UserID: userID,
+		},
+	}
+	if err := s.storage.MarkUserURLsDeleted(ctx, tdb); err != nil {
+		s.T().Fatalf("Ошибка подготовки тестовых данных: %v", err)
+	}
+	_, err = s.storage.Resolve(ctx, deletedToken)
+	s.Require().Error(err)
 }
 
 const targetBaseURL = "http://localhost:8080/test"
@@ -145,6 +161,12 @@ func (s *RouterTestSuite) TestWebhook() {
 			erResHeader:      "Location",
 			erResHeaderValue: yandexLongURL,
 			erResCode:        http.StatusTemporaryRedirect,
+		},
+		{
+			name:      "Токен ранее помечен удаленным",
+			method:    http.MethodGet,
+			reqURL:    "/" + deletedToken,
+			erResCode: http.StatusGone,
 		},
 		// POST
 		{
@@ -662,6 +684,56 @@ func (s *RouterTestSuite) TestWebhook_getUserURLs() {
 		require.NoError(t, err)
 		require.Len(t, rbJson, len(resURLs))
 	})
+
+	svc.AssertExpectations(s.T())
+	assert.NoError(s.T(), connMock.ExpectationsWereMet())
+}
+
+func (s *RouterTestSuite) TestWebhook_markUserURLsDeleted() {
+	batchReq := model.TokensToMarkDeleted{yandexToken}
+
+	svc := new(service.MockShortener)
+	svc.On("MarkUserURLsDeleted", mock.Anything, batchReq, userID).Return(nil)
+
+	sc := service.DefaultShortenerConfig()
+
+	repoMock, connMock := newMockPgStorage(s.T())
+	sc.Storage = repoMock
+
+	svc.On("GetConfig").Return(sc)
+
+	// Успешное создание пользователя
+	var userUIID pgtype.UUID
+	require.NoError(s.T(), userUIID.Scan(userID))
+	connMock.ExpectQuery(`INSERT INTO users DEFAULT VALUES RETURNING id`).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(userUIID))
+
+	rt, err := handler.NewRouter(handler.NewRouterParams(MakeTestApplicationConfig(), svc))
+	if err != nil {
+		s.T().Fatalf("Ошибка настройки тестового маршрутизатора запросов: %v", err)
+	}
+
+	ts := httptest.NewServer(rt)
+	defer ts.Close()
+
+	body, err := json.Marshal(batchReq)
+	require.NoError(s.T(), err)
+
+	req := resty.New().SetRedirectPolicy(resty.NoRedirectPolicy()).R()
+	req.Method = http.MethodDelete
+	req.Header.Set(handler.ContentType, handler.AppJson)
+	req.Header.Set("Accept-Encoding", "")
+	req.URL = ts.URL + "/api/user/urls"
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	resp, err := req.Send()
+
+	require.Conditionf(s.T(),
+		func() bool { return err == nil || isErrAutoRedirectDisabled(err) },
+		"ошибка при создании HTTP-запроса к серверу: %s", err,
+	)
+
+	assert.Equal(s.T(), http.StatusAccepted, resp.StatusCode())
+	assert.Equal(s.T(), handler.AppJson, resp.Header().Get(handler.ContentType))
 
 	svc.AssertExpectations(s.T())
 	assert.NoError(s.T(), connMock.ExpectationsWereMet())
