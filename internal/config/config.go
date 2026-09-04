@@ -34,31 +34,32 @@ func LoadApplicationConfig() (ApplicationConfig, error) {
 
 	parseFlags(&appConfig)
 
-	if envLogLevel := os.Getenv("LOG_LEVEL"); envLogLevel != "" {
+	if envLogLevel, _ := os.LookupEnv("LOG_LEVEL"); envLogLevel != "" {
 		appConfig.LogLevel = envLogLevel
 	}
 
-	if envServAddr := os.Getenv("SERVER_ADDRESS"); envServAddr != "" {
+	if envServAddr, _ := os.LookupEnv("SERVER_ADDRESS"); envServAddr != "" {
 		appConfig.ServerRunAddress = envServAddr
 	}
 
-	if envBaseURL := os.Getenv("BASE_URL"); envBaseURL != "" {
+	if envBaseURL, _ := os.LookupEnv("BASE_URL"); envBaseURL != "" {
 		appConfig.TargetBaseURL = envBaseURL
 	}
 
-	if envDatabaseDSN := os.Getenv("DATABASE_DSN"); envDatabaseDSN != "" {
+	if envDatabaseDSN, _ := os.LookupEnv("DATABASE_DSN"); envDatabaseDSN != "" {
 		appConfig.DatabaseDSN = envDatabaseDSN
 	}
 
-	if envFileStoragePath := os.Getenv("FILE_STORAGE_PATH"); envFileStoragePath != "" {
+	if envFileStoragePath, _ := os.LookupEnv("FILE_STORAGE_PATH"); envFileStoragePath != "" {
 		appConfig.FileStoragePath = envFileStoragePath
 	}
 
-	if envCookieUserIDName := os.Getenv("COOKIE_USER_ID"); envCookieUserIDName != "" {
+	if envCookieUserIDName, _ := os.LookupEnv("COOKIE_USER_ID"); envCookieUserIDName != "" {
 		appConfig.CookieUserIDName = envCookieUserIDName
 	}
 
-	if envSigningKey := []byte(os.Getenv("SIGNING_KEY")); len(envSigningKey) != 0 {
+	envSigningKeyStr, _ := os.LookupEnv("SIGNING_KEY")
+	if envSigningKey := []byte(envSigningKeyStr); len(envSigningKey) != 0 {
 		appConfig.SigningKey = envSigningKey
 	} else {
 		// Т.к. автотесты на платформе должны стартовать со значениями по умолчанию,
@@ -66,7 +67,8 @@ func LoadApplicationConfig() (ApplicationConfig, error) {
 		appConfig.SigningKey = []byte("jwt-signing-super-secret")
 	}
 
-	if envEncryptingKey := []byte(os.Getenv("ENCRYPTING_KEY")); len(envEncryptingKey) == 32 {
+	envEncryptingKeyStr, _ := os.LookupEnv("ENCRYPTING_KEY")
+	if envEncryptingKey := []byte(envEncryptingKeyStr); len(envEncryptingKey) == 32 {
 		appConfig.EncryptingKey = envEncryptingKey
 	} else {
 		// Т.к. автотесты на платформе должны стартовать со значениями по умолчанию,
@@ -74,7 +76,7 @@ func LoadApplicationConfig() (ApplicationConfig, error) {
 		appConfig.EncryptingKey = []byte("amustbe32byteslongsecretkey26.!?")
 	}
 
-	if envTickPeriod := os.Getenv("SAVE_STATE_INTERVAL"); envTickPeriod != "" {
+	if envTickPeriod, _ := os.LookupEnv("SAVE_STATE_INTERVAL"); envTickPeriod != "" {
 		ssp, err := time.ParseDuration(envTickPeriod)
 		if err != nil {
 			return ApplicationConfig{}, err

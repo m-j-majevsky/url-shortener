@@ -69,8 +69,10 @@ func DefaultShortenerConfig() ShortenerConfig {
 }
 
 type Shortener struct {
-	Config        ShortenerConfig
-	DeletionQueue chan repository.ToMarkDeletedReqItem
+	config                 ShortenerConfig
+	deletionQueue          chan repository.ToMarkDeletedReqItem
+	deadLetterLogFile      *os.File
+	deadLetterLogFileMutex sync.Mutex
 }
 
 const errCfgHeader = "ошибка конфигурации сервиса"
@@ -102,21 +104,34 @@ func NewShortener(cfg ShortenerConfig) (*Shortener, error) {
 	}
 
 	shortener := &Shortener{
-		Config:        cfg,
-		DeletionQueue: make(chan repository.ToMarkDeletedReqItem, cfg.DeletionQueueBuffer),
+		config:        cfg,
+		deletionQueue: make(chan repository.ToMarkDeletedReqItem, cfg.DeletionQueueBuffer),
 	}
 
 	return shortener, nil
 }
 
+func (s *Shortener) StopItemsDeletionProcessor() {
+	close(s.deletionQueue)
+}
+
+func (s *Shortener) CleanUp() {
+	s.deadLetterLogFileMutex.Lock()
+	defer s.deadLetterLogFileMutex.Unlock()
+
+	if s.deadLetterLogFile != nil {
+		s.deadLetterLogFile.Close()
+	}
+}
+
 // generateTokens генериурет num различных base62-токенов,
 // длина каждого из которых лежит в отрезке
-// [Config.MinTokenLength, Config.MахTokenLength]
+// [config.MinTokenLength, config.MахTokenLength]
 func (s *Shortener) generateTokens(num int) ([]string, error) {
-	cfg := s.Config
+	cfg := s.config
 	tokens := make(map[string]struct{}, num)
 	for attempt := 0; attempt < cfg.MaxGeneratingAttempts*num; attempt++ {
-		bytes, err := crypto.GenerateRandomBytes(s.Config.RandProv, cfg.BytesToGenerate)
+		bytes, err := crypto.GenerateRandomBytes(s.config.RandProv, cfg.BytesToGenerate)
 		if err != nil {
 			return []string{}, fmt.Errorf("ошибка генерации случайного токена: %w", err)
 		}
@@ -152,7 +167,7 @@ func (s *Shortener) generateTokens(num int) ([]string, error) {
 }
 
 func (s *Shortener) GenerateAndStore(ctx context.Context, longURL, userID string) (string, error) {
-	for i := 0; i < s.Config.MaxStoringAttempts; i++ {
+	for i := 0; i < s.config.MaxStoringAttempts; i++ {
 		tokens, err := s.generateTokens(1)
 		if err != nil {
 			// Ошибка библиотечного генератора, контекста,
@@ -163,7 +178,7 @@ func (s *Shortener) GenerateAndStore(ctx context.Context, longURL, userID string
 		}
 
 		token := tokens[0]
-		err = s.Config.Storage.Store(ctx, token, longURL, userID)
+		err = s.config.Storage.Store(ctx, token, longURL, userID)
 
 		if err == nil {
 			// Успех
@@ -187,11 +202,11 @@ func (s *Shortener) GenerateAndStore(ctx context.Context, longURL, userID string
 		}
 	}
 
-	return "", fmt.Errorf("не удалось сохранить URL за %d попыток", s.Config.MaxStoringAttempts)
+	return "", fmt.Errorf("не удалось сохранить URL за %d попыток", s.config.MaxStoringAttempts)
 }
 
 func (s *Shortener) Resolve(ctx context.Context, token string) (string, error) {
-	url, err := s.Config.Storage.Resolve(ctx, token)
+	url, err := s.config.Storage.Resolve(ctx, token)
 	if err != nil {
 		return "", fmt.Errorf("ошибка хранилища: %w", err)
 	}
@@ -199,7 +214,7 @@ func (s *Shortener) Resolve(ctx context.Context, token string) (string, error) {
 }
 
 func (s *Shortener) Ping(ctx context.Context) error {
-	swp, ok := s.Config.Storage.(StoragePinger)
+	swp, ok := s.config.Storage.(StoragePinger)
 	if !ok {
 		return fmt.Errorf("хранилище не поддерживает метод Ping")
 	}
@@ -207,7 +222,7 @@ func (s *Shortener) Ping(ctx context.Context) error {
 }
 
 func (s *Shortener) GetConfig() ShortenerConfig {
-	return s.Config
+	return s.config
 }
 
 func (s *Shortener) BatchStore(ctx context.Context, req model.BatchShortenReq, userID string) (model.BatchShortenRes, error) {
@@ -223,7 +238,7 @@ func (s *Shortener) BatchStore(ctx context.Context, req model.BatchShortenReq, u
 	stored := make(repository.StoreBatch, 0, reqLen)
 
 	// Отсчет попыток сохранения до успешной или до достижения лимита попыток
-	for nAttempts := 0; nAttempts < s.Config.MaxStoringAttempts; nAttempts++ {
+	for nAttempts := 0; nAttempts < s.config.MaxStoringAttempts; nAttempts++ {
 		tokens, err := s.generateTokens(len(batch))
 		if err != nil {
 			// Ошибки механизма генерации токенов
@@ -233,7 +248,7 @@ func (s *Shortener) BatchStore(ctx context.Context, req model.BatchShortenReq, u
 
 		assignTokensToStoreBatchItems(batch, tokens)
 
-		storageRes, err := s.Config.Storage.BatchStore(ctx, batch, userID)
+		storageRes, err := s.config.Storage.BatchStore(ctx, batch, userID)
 		if err == nil {
 			// Полный успех, можно переходить к оформлению ответа
 			stored = append(stored, storageRes...)
@@ -339,7 +354,7 @@ func (s *Shortener) restoreWithError(ctx context.Context, toRollback repository.
 			tokens = append(tokens, it.Token)
 		}
 
-		sc, ok := s.Config.Storage.(StorageCleaner)
+		sc, ok := s.config.Storage.(StorageCleaner)
 		if !ok {
 			// Серьезная ошибка
 			errs = append(errs, fmt.Errorf("невозможно получить доступ к методу зачистки мусора из хранилища"))
@@ -357,7 +372,7 @@ func (s *Shortener) restoreWithError(ctx context.Context, toRollback repository.
 // ListUserURLs запрашивает из хранилища все записи вида (shortenURL, originalURL),
 // сохраненные пользователем userID за время его жизни
 func (s *Shortener) ListUserURLs(ctx context.Context, userID string) (model.UserURLsRes, error) {
-	res, err := s.Config.Storage.ListUserURLs(ctx, userID)
+	res, err := s.config.Storage.ListUserURLs(ctx, userID)
 	if err != nil {
 		return model.UserURLsRes{}, fmt.Errorf("ошибка хранилища: %w", err)
 	}
@@ -390,7 +405,7 @@ func (s *Shortener) putInDeletionQueue(batch repository.ToMarkDeletedReqBatch) e
 	errs := make([]error, 0, len(batch))
 	for _, it := range batch {
 		select {
-		case s.DeletionQueue <- it:
+		case s.deletionQueue <- it:
 			// nop
 		default:
 			errs = append(errs, NewErrTokenLeftUndeleted(it.Token, it.UserID))
@@ -400,8 +415,8 @@ func (s *Shortener) putInDeletionQueue(batch repository.ToMarkDeletedReqBatch) e
 }
 
 func (s *Shortener) StartItemsDeletionProcessor(ctx context.Context) {
-	batch := make(repository.ToMarkDeletedReqBatch, 0, s.Config.DeletionBatchSize)
-	ticker := time.NewTicker(s.Config.DeletionQueueFlushTimeout)
+	batch := make(repository.ToMarkDeletedReqBatch, 0, s.config.DeletionBatchSize)
+	ticker := time.NewTicker(s.config.DeletionQueueFlushTimeout)
 	defer ticker.Stop()
 
 	var storageWg sync.WaitGroup
@@ -418,26 +433,31 @@ func (s *Shortener) StartItemsDeletionProcessor(ctx context.Context) {
 		go func(batch repository.ToMarkDeletedReqBatch) {
 			defer storageWg.Done()
 
-			if err := s.Config.Storage.MarkUserURLsDeleted(ctx, batch); err != nil {
+			if err := s.config.Storage.MarkUserURLsDeleted(ctx, batch); err != nil {
 				logger.Log.Info("storage error while running batch item deletion query", zap.Error(err))
 				// Сохраняем в очередь данные, которые не удалось записать
 				s.writeToDeadLetterLog(NewUndeletedItemsFromReqBatch(batch))
+
+				// TODO
+				// Точка расширения:
+				// * ввести единый канал для сбора UndeleteItem;
+				// * вызывавать writeToDeadLetterLog при чтении из канала
 			}
 		}(batchToStore)
 	}
 
 	for {
 		select {
-		case item, ok := <-s.DeletionQueue:
+		case item, ok := <-s.deletionQueue:
 			if !ok {
 				flush()
 				storageWg.Wait()
 				return
 			}
 			batch = append(batch, item)
-			if len(batch) >= s.Config.DeletionBatchSize {
+			if len(batch) >= s.config.DeletionBatchSize {
 				flush()
-				ticker.Reset(s.Config.DeletionQueueFlushTimeout)
+				ticker.Reset(s.config.DeletionQueueFlushTimeout)
 			}
 		case <-ticker.C:
 			flush()
@@ -450,13 +470,24 @@ func (s *Shortener) StartItemsDeletionProcessor(ctx context.Context) {
 }
 
 func (s *Shortener) writeToDeadLetterLog(batch []UndeletedItem) error {
-	file, err := os.OpenFile(s.Config.DeadLetterLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("критическая ошибка: не удалось открыть лог ошибок при запросах на удаление: %w", err)
-	}
-	defer file.Close()
+	s.deadLetterLogFileMutex.Lock()
+	defer s.deadLetterLogFileMutex.Unlock()
 
-	encoder := json.NewEncoder(file)
+	// TODO
+	//
+	// По-хорошему, надо бы поднять отдельный канал для накопления ошибок с UndeleteItem,
+	// тогда можно будет обойтись без mutex'а, но за нехваткой времени на отладку соответствующей инфрасруктуры
+	// оставляю решение с mutex.
+
+	if s.deadLetterLogFile == nil {
+		dllf, err := os.OpenFile(s.config.DeadLetterLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return fmt.Errorf("критическая ошибка: не удалось открыть лог ошибок при запросах на удаление: %w", err)
+		}
+		s.deadLetterLogFile = dllf
+	}
+
+	encoder := json.NewEncoder(s.deadLetterLogFile)
 	now := time.Now()
 	for _, item := range batch {
 		item.Discarded = now
@@ -514,6 +545,11 @@ func (s *Shortener) HandleErrTokenLeftUndeletedAndLogData(err error) error {
 	}
 
 	return s.writeToDeadLetterLog(leftItems)
+
+	// TODO
+	// Точка расширения:
+	// * ввести единый канал для сбора UndeleteItem;
+	// * вызывавать writeToDeadLetterLog при чтении из канала
 }
 
 type UndeletedItem struct {

@@ -34,9 +34,9 @@ func main() {
 	}
 	defer logger.Log.Sync()
 
-	// Создаём контекст с возможностью отмены для корректного завершения
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// Создаём контекст с возможностью отмены по сигналу для корректного завершения
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	var localStorage *repository.LocalStorage
 	var saveStateMode bool
@@ -78,6 +78,7 @@ func main() {
 	if err != nil {
 		logger.Log.Fatal(err.Error(), zap.String("event", "initializing service"))
 	}
+	defer service.CleanUp()
 
 	// Настраиваем глобальную систему канализации и обработки запросов на удаление записей (DELETE /api/user/urls)
 	var backgroundWg sync.WaitGroup
@@ -93,14 +94,32 @@ func main() {
 		Handler: router,
 	}
 
-	// Запускаем фоном обработчик сигналов SIGINT/SIGTERM
-	go handleShutdownSignals(cfg.ShutdownTimeout, cancel, server, service, &backgroundWg, sigChan)
-
 	// Сам сервер запускаем фоном
 	go listenAndServe(server)
 
 	// Блокируем main, пока не придёт сигнал
 	<-ctx.Done()
+
+	// Инициируем graceful shutdown
+	event := zap.String("event", "shutdown on signal")
+	logger.Log.Info("Shutdown signal received", zap.String("cause", context.Cause(ctx).Error()), event)
+
+	shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	defer shutdownRelease()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.Log.Error("Graceful shutdown timed out", zap.Error(err), event)
+	} else {
+		logger.Log.Info("HTTP server stopped gracefully", event)
+	}
+
+	// Закрываем канал для мягкой остановки глобального процесса канализации и обработки
+	// запросов на удаление записей (DELETE /api/user/urls)
+	service.StopItemsDeletionProcessor()
+	logger.Log.Info("Deletion processor input queue channel closed", event)
+
+	// Дожидаемся окончания обработки данных в канале, их сохранения или логирования ошибки
+	backgroundWg.Wait()
 
 	logger.Log.Info("Application shutting down gracefully", zap.String("event", "shutdown complete"))
 }
@@ -148,42 +167,6 @@ func loadLocalStorage(storagePath string) (*repository.LocalStorage, bool, error
 	}
 
 	return nil, false, err
-}
-
-// Обработка сигналов SIGINT/SIGTERM
-func handleShutdownSignals(
-	shutdownTimeOut time.Duration,
-	cancel context.CancelFunc,
-	server *http.Server,
-	service *service.Shortener,
-	backgroundWg *sync.WaitGroup,
-	sigChan <-chan os.Signal,
-) {
-	sig := <-sigChan
-
-	event := zap.String("event", "shutdown on signal")
-
-	logger.Log.Info("Shutdown signal received", zap.String("signal", sig.String()), event)
-
-	// Graceful shutdown сервера
-	shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), shutdownTimeOut)
-	defer shutdownRelease()
-
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		logger.Log.Error("Graceful shutdown timed out", zap.Error(err), event)
-	} else {
-		logger.Log.Info("HTTP server stopped gracefully", event)
-	}
-
-	// Закрываем канал для мягкой остановки глобального процесса канализации и обработки
-	// запросов на удаление записей (DELETE /api/user/urls)
-	close(service.DeletionQueue)
-	logger.Log.Info("Deletion processor input queue channel closed", event)
-
-	// Дожидаемся окончания обработки данных в канале, их сохранения или логирования ошибки
-	backgroundWg.Wait()
-
-	cancel()
 }
 
 // Для сохранения состояния локального хранилища в файл по завершении работы сервиса (предполагается defer вызов)

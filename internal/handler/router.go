@@ -222,9 +222,12 @@ func getStoragePinger(svc URLShortener) StoragePinger {
 	return sp
 }
 
-func (rt *Router) getUserIDFromContext(ctx context.Context) (string, bool) {
-	val, ok := ctx.Value(rt.userIDKey).(string)
-	return val, ok
+func (rt *Router) getUserIDFromContext(ctx context.Context) (val string, err error) {
+	val, found := ctx.Value(rt.userIDKey).(string)
+	if !found {
+		err = fmt.Errorf("ключ %v не найден в вызываемом контексте", rt.userIDKey)
+	}
+	return
 }
 
 // Путь "/ping", GET
@@ -290,9 +293,9 @@ func (rt *Router) resolveShortURL(w http.ResponseWriter, r *http.Request) {
 // Путь "/", POST (текстовый api)
 
 func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) {
-	userID, ok := rt.getUserIDFromContext(r.Context())
-	if !ok {
-		logger.Log.Debug(fmt.Sprintf("empty %v extracted from request context", rt.userIDKey))
+	userID, err := rt.getUserIDFromContext(r.Context())
+	if err != nil {
+		logger.Log.Debug("error reading request context", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -338,9 +341,9 @@ func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) 
 // Путь "/api/shorten", POST
 
 func (rt *Router) shortenLongURLForJSON(w http.ResponseWriter, r *http.Request) {
-	userID, ok := rt.getUserIDFromContext(r.Context())
-	if !ok {
-		logger.Log.Debug(fmt.Sprintf("empty %v extracted from request context", rt.userIDKey))
+	userID, err := rt.getUserIDFromContext(r.Context())
+	if err != nil {
+		logger.Log.Debug("error reading request context", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -396,9 +399,9 @@ func (rt *Router) shortenLongURLForJSON(w http.ResponseWriter, r *http.Request) 
 // Путь "/api/shorten/batch", POST
 
 func (rt *Router) shortenBatch(w http.ResponseWriter, r *http.Request) {
-	userID, ok := rt.getUserIDFromContext(r.Context())
-	if !ok {
-		logger.Log.Debug(fmt.Sprintf("empty %v extracted from request context", rt.userIDKey))
+	userID, err := rt.getUserIDFromContext(r.Context())
+	if err != nil {
+		logger.Log.Debug("error reading request context", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -467,9 +470,9 @@ func setBaseForShortenBatch(baseURL string, batch model.BatchShortenRes) {
 // Путь "/api/user/urls", GET
 
 func (rt *Router) getUserURLs(w http.ResponseWriter, r *http.Request) {
-	userID, ok := rt.getUserIDFromContext(r.Context())
-	if !ok {
-		logger.Log.Debug(fmt.Sprintf("empty %v extracted from request context", rt.userIDKey))
+	userID, err := rt.getUserIDFromContext(r.Context())
+	if err != nil {
+		logger.Log.Debug("error reading request context", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -514,9 +517,9 @@ func setBaseForUserURLs(baseURL string, res model.UserURLsRes) {
 // Путь "/api/user/urls", DELETE
 
 func (rt *Router) markUserURLsDeleted(w http.ResponseWriter, r *http.Request) {
-	userID, ok := rt.getUserIDFromContext(r.Context())
-	if !ok {
-		logger.Log.Debug(fmt.Sprintf("empty %v extracted from request context", rt.userIDKey))
+	userID, err := rt.getUserIDFromContext(r.Context())
+	if err != nil {
+		logger.Log.Debug("error reading request context", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}

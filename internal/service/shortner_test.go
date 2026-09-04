@@ -94,7 +94,7 @@ func (s *ShortenerSuite) TestGenerateTokens_LengthInRange() {
 		s.NoError(err)
 		s.Equal(1, len(tokens))
 		tok := tokens[0]
-		s.True(len(tok) >= s.svc.Config.MinTokenLength && len(tok) <= s.svc.Config.MaxTokenLength)
+		s.True(len(tok) >= s.svc.config.MinTokenLength && len(tok) <= s.svc.config.MaxTokenLength)
 		s.NoError(encoding.IsValidBase62(tok))
 	}
 }

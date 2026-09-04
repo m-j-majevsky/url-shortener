@@ -312,6 +312,9 @@ func (s *LocalStorage) CreateUser(_ context.Context) (uid string, err error) {
 }
 
 func (s *LocalStorage) ListUserURLs(_ context.Context, userID string) (model.UserURLsRes, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	tokens, exists := s.users[userID]
 	if !exists {
 		return model.UserURLsRes{}, nil

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/golang-jwt/jwt/v4"
+	"github.com/m-j-majevsky/url-shortener/internal/auth"
 	"github.com/m-j-majevsky/url-shortener/internal/logger"
 	"go.uber.org/zap"
 )
@@ -146,11 +146,6 @@ func isValidRequestContentType(ct string) bool {
 
 // Функциональность установки-извлечения cookie с ID пользователя
 
-type Claims struct {
-	jwt.RegisteredClaims
-	UserID string `json:"user_id"`
-}
-
 func CookieMiddleware(storage UserStorage, params UserCookieParams) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -162,13 +157,13 @@ func CookieMiddleware(storage UserStorage, params UserCookieParams) func(http.Ha
 				// Cookie не найдена; требуется выдача токена
 				setNewCookie = true
 			} else { // err == nil
-				var decryptingErr error
-				userID, decryptingErr = decryptAndParseJWT(cookie.Value, params.EncryptingKey, params.SigningKey)
-				if decryptingErr != nil {
+				var parsingErr error
+				userID, parsingErr = auth.ParseUserIDJWT(cookie.Value, params.SigningKey)
+				if parsingErr != nil {
 					// Ошибки парсинга и дешифровки воспринимаем как указание на невалидность токена,
 					// что требует выдачи нового
 					setNewCookie = true
-				} else { // decryptingErr == nil
+				} else { // parsingErr == nil
 					if userID == "" {
 						// Если кука присутствует в запросе, но не содержит ID пользователя,
 						// так как она пуста, то возвращаем HTTP-статус 401 Unauthorized
@@ -188,7 +183,7 @@ func CookieMiddleware(storage UserStorage, params UserCookieParams) func(http.Ha
 					return
 				}
 
-				responseCookieValue, err := generateEncryptedJWT(userID, params.UserCookieTTL, params.EncryptingKey, params.SigningKey)
+				responseCookieValue, err := auth.GenerateUserIDJWT(userID, params.UserCookieTTL, params.SigningKey)
 				if err != nil {
 					logger.Log.Error("JWT encrypting failed", zap.Error(err))
 					w.WriteHeader(http.StatusInternalServerError)
