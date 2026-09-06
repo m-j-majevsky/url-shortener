@@ -60,7 +60,6 @@ type UserCookieParams struct {
 	UserCookieName string
 	UserCookieTTL  time.Duration
 	SigningKey     []byte
-	EncryptingKey  []byte
 	userIDKey      contextKey
 }
 
@@ -69,7 +68,6 @@ func NewUserCookieParams(cfg config.ApplicationConfig) UserCookieParams {
 		UserCookieName: cfg.CookieUserIDName,
 		UserCookieTTL:  cfg.CookieUserIDTTL,
 		SigningKey:     cfg.SigningKey,
-		EncryptingKey:  cfg.EncryptingKey,
 	}
 }
 

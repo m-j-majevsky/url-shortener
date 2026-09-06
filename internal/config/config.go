@@ -16,7 +16,6 @@ type ApplicationConfig struct {
 	DatabaseDSN       string
 	CookieUserIDName  string        // имя cookie, в котором будет хранится JWT с ID пользователя, выданным клиенту
 	SigningKey        []byte        // ключ подписания JWT
-	EncryptingKey     []byte        // 32-байтовый ключ шифра AES
 	CookieUserIDTTL   time.Duration // время жизни cookie, имя которого хранится в CookieUserIDName
 	SaveStateInterval time.Duration // интервал для таймера на сохранение данных в FileStoragePath
 	ShutdownTimeout   time.Duration // время на graceful shutdown
@@ -65,15 +64,6 @@ func LoadApplicationConfig() (ApplicationConfig, error) {
 		// Т.к. автотесты на платформе должны стартовать со значениями по умолчанию,
 		// пока также добавлю ветвь с установкой ключа в явном виде
 		appConfig.SigningKey = []byte("jwt-signing-super-secret")
-	}
-
-	envEncryptingKeyStr, _ := os.LookupEnv("ENCRYPTING_KEY")
-	if envEncryptingKey := []byte(envEncryptingKeyStr); len(envEncryptingKey) == 32 {
-		appConfig.EncryptingKey = envEncryptingKey
-	} else {
-		// Т.к. автотесты на платформе должны стартовать со значениями по умолчанию,
-		// пока также добавлю ветвь с установкой ключа в явном виде
-		appConfig.EncryptingKey = []byte("amustbe32byteslongsecretkey26.!?")
 	}
 
 	if envTickPeriod, _ := os.LookupEnv("SAVE_STATE_INTERVAL"); envTickPeriod != "" {

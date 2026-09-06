@@ -94,7 +94,6 @@ func MakeTestApplicationConfig() config.ApplicationConfig {
 		ServiceConfig:    svcConfig,
 		CookieUserIDName: "user_id_jwot",
 		SigningKey:       secretJWTKey,
-		EncryptingKey:    secretAESKey,
 		CookieUserIDTTL:  24 * time.Hour,
 	}
 }
