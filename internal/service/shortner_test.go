@@ -20,6 +20,8 @@ type ShortenerSuite struct {
 }
 
 var (
+	userID = "8222be97-0266-40d1-b069-54f29508de43"
+
 	yandexToken = "sPv80uUs"
 	yandexURL   = "https://yandex.ru"
 
@@ -32,7 +34,7 @@ var (
 
 func (s *ShortenerSuite) SetupTest() {
 	s.storage = repository.NewLocalStorage()
-	if err := s.storage.Store(s.T().Context(), yandexToken, yandexURL); err != nil {
+	if err := s.storage.Store(s.T().Context(), yandexToken, yandexURL, userID); err != nil {
 		s.T().Fatalf("Ошибка подготовки тестовых данных: %s", err.Error())
 	}
 }
@@ -154,7 +156,7 @@ func (s *ShortenerSuite) TestGenerateRandomBytes_ErrorWhenProviderFails() {
 
 func (s *ShortenerSuite) TestResolve_ExistingToken() {
 	// Контекст:
-	// (yandexToken -> yandexURL) уже лежат в хранилище;
+	// (userID) и (yandexToken -> yandexURL) уже лежат в хранилище
 	// других данных в нём нет
 
 	s.createShotnerInstance(s.storage)
@@ -166,7 +168,7 @@ func (s *ShortenerSuite) TestResolve_ExistingToken() {
 
 func (s *ShortenerSuite) TestResolve_ErrTokenNotFound() {
 	// Контекст:
-	// (yandexToken -> yandexURL) уже лежат в хранилище;
+	// (userID) и (yandexToken -> yandexURL) уже лежат в хранилище
 	// других данных в нём нет
 
 	s.createShotnerInstance(s.storage)
@@ -181,12 +183,12 @@ func (s *ShortenerSuite) TestResolve_ErrTokenNotFound() {
 
 func (s *ShortenerSuite) TestGenerateAndStore_Success() {
 	// Контекст:
-	// (yandexToken -> yandexURL) уже лежат в хранилище;
+	// (userID) и (yandexToken -> yandexURL) уже лежат в хранилище
 	// других данных в нём нет
 
 	s.createShotnerInstance(s.storage)
 
-	token, err := s.svc.GenerateAndStore(s.T().Context(), mailToken)
+	token, err := s.svc.GenerateAndStore(s.T().Context(), mailToken, userID)
 	s.Require().NoError(err)
 	s.NotEmpty(token)
 	s.NoError(encoding.IsValidBase62(token))
@@ -194,12 +196,12 @@ func (s *ShortenerSuite) TestGenerateAndStore_Success() {
 
 func (s *ShortenerSuite) TestGenerateAndStore_Got_ErrOriginalURLExists() {
 	// Контекст:
-	// (yandexToken -> yandexURL) уже лежат в хранилище;
+	// (userID) и (yandexToken -> yandexURL) уже лежат в хранилище
 	// других данных в нём нет
 
 	s.createShotnerInstance(s.storage)
 
-	token, err := s.svc.GenerateAndStore(s.T().Context(), yandexURL)
+	token, err := s.svc.GenerateAndStore(s.T().Context(), yandexURL, userID)
 
 	var eoue *repository.ErrOriginalURLExists
 	s.Require().ErrorAs(err, &eoue)
@@ -214,7 +216,7 @@ func (s *ShortenerSuite) TestGenerateAndStore_Got_ErrOriginalURLExists() {
 
 func (s *ShortenerSuite) TestBatchStore_Success() {
 	// Контекст:
-	// (yandexToken -> yandexURL) уже лежат в хранилище;
+	// (userID) и (yandexToken -> yandexURL) уже лежат в хранилище
 	// других данных в нём нет
 
 	s.createShotnerInstance(s.storage)
@@ -230,7 +232,7 @@ func (s *ShortenerSuite) TestBatchStore_Success() {
 		},
 	}
 
-	res, err := s.svc.BatchStore(s.T().Context(), req)
+	res, err := s.svc.BatchStore(s.T().Context(), req, userID)
 
 	s.Require().NoError(err)
 	s.Len(res, 2)
@@ -247,7 +249,7 @@ func (s *ShortenerSuite) TestBatchStore_Success() {
 
 func (s *ShortenerSuite) TestBatchStore_Got_Conflicts_On_OriginalURL() {
 	// Контекст:
-	// (yandexToken -> yandexURL) уже лежат в хранилище;
+	// (userID) и (yandexToken -> yandexURL) уже лежат в хранилище
 	// других данных в нём нет
 
 	s.createShotnerInstance(s.storage)
@@ -263,7 +265,7 @@ func (s *ShortenerSuite) TestBatchStore_Got_Conflicts_On_OriginalURL() {
 		},
 	}
 
-	res, err := s.svc.BatchStore(s.T().Context(), req)
+	res, err := s.svc.BatchStore(s.T().Context(), req, userID)
 
 	s.Require().NoError(err)
 	s.Len(res, 2)
@@ -305,4 +307,63 @@ func (s *ShortenerSuite) TestPingDB() {
 		s.ErrorIs(s.svc.Ping(ctx), pfErr)
 		rst.AssertExpectations(s.T())
 	})
+}
+
+// ListUserURLs
+
+func (s *ShortenerSuite) TestListUserURLs_Success() {
+	// Контекст:
+	// (userID) и (yandexToken -> yandexURL) уже лежат в хранилище;
+	//
+	// других данных в нём нет
+
+	s.createShotnerInstance(s.storage)
+
+	res, err := s.svc.ListUserURLs(s.T().Context(), userID)
+
+	s.Require().NoError(err)
+	s.Len(res, 1)
+
+	s.Assert().Equal(yandexToken, res[0].ShortURL)
+	s.Assert().Equal(yandexURL, res[0].OriginalURL)
+}
+
+func (s *ShortenerSuite) TestListUserURLs_Empty_Result() {
+	// Контекст:
+	// (userID) и (yandexToken -> yandexURL) уже лежат в хранилище;
+	//
+	// других данных в нём нет
+
+	s.createShotnerInstance(s.storage)
+
+	res, err := s.svc.ListUserURLs(s.T().Context(), "not-existed-user")
+
+	s.Require().NoError(err)
+	s.NotNil(res)
+	s.Empty(res)
+}
+
+// MarkUserURLsDeleted
+
+func (s *ShortenerSuite) TestMarkUserURLsDeleted_And_Resolve_ErrTokenIsDeleted() {
+	// Контекст:
+	// (userID) и (yandexToken -> yandexURL) уже лежат в хранилище
+	// других данных в нём нет
+
+	// Подготовка данных
+	s.createShotnerInstance(s.storage)
+	toMarkDeleted := repository.ToMarkDeletedReqBatch{
+		repository.ToMarkDeletedReqItem{
+			Token:  yandexToken,
+			UserID: userID,
+		},
+	}
+	if err := s.storage.MarkUserURLsDeleted(s.T().Context(), toMarkDeleted); err != nil {
+		s.T().Fatalf("Ошибка подготовки тестовых данных: %s", err.Error())
+	}
+
+	url, err := s.svc.Resolve(s.T().Context(), yandexToken)
+	var errTID *repository.ErrTokenIsDeleted
+	s.ErrorAs(err, &errTID)
+	s.Equal("", url)
 }

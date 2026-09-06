@@ -12,4 +12,11 @@ type (
 	}
 
 	BatchShortenRes []BatchShortenResItem
+
+	UserURLsResItem struct {
+		ShortURL    string `json:"short_url" db:"token"`
+		OriginalURL string `json:"original_url" db:"original_url"`
+	}
+
+	UserURLsRes []UserURLsResItem
 )

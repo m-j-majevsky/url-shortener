@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/m-j-majevsky/url-shortener/internal/model"
 )
 
 type (
@@ -28,6 +30,7 @@ type (
 	// Сделав интерфейс приватным мы также избегаем просачивания наружу пакета
 	// внутренних типов pgx и pgconn.
 	dbtx interface {
+		Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 		QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 		Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 		Ping(ctx context.Context) error
@@ -46,18 +49,22 @@ func NewPgStorage(db dbtx) *pgStorage {
 	}
 }
 
-func (s *pgStorage) Store(ctx context.Context, token string, longURL string) error {
+func (s *pgStorage) Store(ctx context.Context, token, longURL, userID string) error {
 	// Важно: ON CONFLICT срабатывает _только_ для original_url.
 	// Конфликты по token будут падать в ошибку, которую мы обработаем ниже.
-	const q = `INSERT INTO shorten_urls (token, original_url) 
-			   VALUES ($1, $2)
+	const q = `INSERT INTO shorten_urls (token, original_url, user_id) 
+			   VALUES ($1, $2, $3)
 			   ON CONFLICT (original_url) DO UPDATE 
 			   SET original_url = EXCLUDED.original_url 
 			   RETURNING token`
 
-	var returnedToken string
+	var userUIID pgtype.UUID
+	if err := userUIID.Scan(userID); err != nil {
+		return fmt.Errorf("неверный формат ID пользователя %q: %w", userID, err)
+	}
 
-	row := s.db.QueryRow(ctx, q, token, longURL)
+	var returnedToken string
+	row := s.db.QueryRow(ctx, q, token, longURL, userUIID)
 	if err := row.Scan(&returnedToken); err != nil {
 		// Различаем по коду PG нарушение уникальности и прочие ошибки
 		var pgErr *pgconn.PgError
@@ -86,12 +93,13 @@ func (s *pgStorage) Store(ctx context.Context, token string, longURL string) err
 }
 
 func (s *pgStorage) Resolve(ctx context.Context, token string) (string, error) {
-	const q = `SELECT original_url
+	const q = `SELECT original_url, is_deleted
 	           FROM shorten_urls
 	           WHERE token = $1`
 
 	var url string
-	err := s.db.QueryRow(ctx, q, token).Scan(&url)
+	var isDeleted bool
+	err := s.db.QueryRow(ctx, q, token).Scan(&url, &isDeleted)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", NewErrTokenNotFound(token)
@@ -99,6 +107,10 @@ func (s *pgStorage) Resolve(ctx context.Context, token string) (string, error) {
 
 	if err != nil {
 		return "", fmt.Errorf("ошибка запроса URL по токену %s: %w", token, err)
+	}
+
+	if isDeleted {
+		return "", NewErrTokenIsDeleted(token)
 	}
 
 	return url, nil
@@ -109,16 +121,21 @@ func (s *pgStorage) Ping(ctx context.Context) error {
 }
 
 // Важно:
-// Гарантировать уникальность Batch.Token среди элемемнов параметра batch,
+// Гарантировать уникальность StoreBatch.Token среди элемемнов параметра batch,
 // это ответсвенность вызывающего кода!
-func (s *pgStorage) BatchStore(ctx context.Context, batchReq Batch) (Batch, error) {
+func (s *pgStorage) BatchStore(ctx context.Context, batchReq StoreBatch, userID string) (StoreBatch, error) {
 	if len(batchReq) == 0 {
-		return Batch{}, nil
+		return StoreBatch{}, nil
+	}
+
+	var userUIID pgtype.UUID
+	if err := userUIID.Scan(userID); err != nil {
+		return StoreBatch{}, fmt.Errorf("неверный формат ID пользователя %q: %w", userID, err)
 	}
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return Batch{}, fmt.Errorf("ошибка создания транзакции: %w", err)
+		return StoreBatch{}, fmt.Errorf("ошибка создания транзакции: %w", err)
 	}
 	// Откат по умолчанию, будет перезаписан Commit, если всё ок
 	defer func() { _ = tx.Rollback(ctx) }()
@@ -126,23 +143,23 @@ func (s *pgStorage) BatchStore(ctx context.Context, batchReq Batch) (Batch, erro
 	const qStoreName = "batch_store"
 	// Важно: ON CONFLICT срабатывает _только_ для original_url.
 	// Конфликты по token будут падать в ошибку, которую мы обработаем ниже.
-	const qStore = `INSERT INTO shorten_urls (token, original_url) 
-					VALUES ($1, $2)
+	const qStore = `INSERT INTO shorten_urls (token, original_url, user_id) 
+					VALUES ($1, $2, $3)
 					ON CONFLICT (original_url) DO UPDATE 
 			        SET original_url = EXCLUDED.original_url 
 					RETURNING token`
 
 	if _, err = tx.Prepare(ctx, qStoreName, qStore); err != nil {
-		return Batch{}, fmt.Errorf("ошибка подготовки запроса: %w", err)
+		return StoreBatch{}, fmt.Errorf("ошибка подготовки запроса: %w", err)
 	}
 
-	batchRes := make(Batch, len(batchReq))
+	batchRes := make(StoreBatch, len(batchReq))
 	copy(batchRes, batchReq)
 
 	for i := range batchRes {
 		item := &batchRes[i]
 
-		row := tx.QueryRow(ctx, qStoreName, item.Token, item.OriginalURL)
+		row := tx.QueryRow(ctx, qStoreName, item.Token, item.OriginalURL, userUIID)
 
 		var returnedToken string
 		if err := row.Scan(&returnedToken); err != nil {
@@ -156,11 +173,11 @@ func (s *pgStorage) BatchStore(ctx context.Context, batchReq Batch) (Batch, erro
 				}
 
 				// Если вдруг конфликт по другому ограничению, которое мы не ожидали - падаем
-				return Batch{}, fmt.Errorf("неожиданный конфликт ограничения %s: %w", pgErr.ConstraintName, err)
+				return StoreBatch{}, fmt.Errorf("неожиданный конфликт ограничения %s: %w", pgErr.ConstraintName, err)
 			}
 
 			// Прочие ошибки считаем критичными для транзакции
-			return Batch{}, fmt.Errorf("ошибка записи в БД: %w", err)
+			return StoreBatch{}, fmt.Errorf("ошибка записи в БД: %w", err)
 		}
 
 		// Если мы здесь, значит либо INSERT прошел успешно, либо сработал ON CONFLICT (DO UPDATE)
@@ -174,7 +191,7 @@ func (s *pgStorage) BatchStore(ctx context.Context, batchReq Batch) (Batch, erro
 	} // for
 
 	if err := tx.Commit(ctx); err != nil {
-		return Batch{}, fmt.Errorf("ошибка завершения транзакции: %w", err)
+		return StoreBatch{}, fmt.Errorf("ошибка завершения транзакции: %w", err)
 	}
 
 	return MayBeAddErrors(batchRes)
@@ -206,6 +223,88 @@ func (s *pgStorage) DeleteByTokens(ctx context.Context, tokens []string) error {
 
 	if err = tx.Commit(ctx); err != nil {
 		return fmt.Errorf("ошибка завершения транзакции: %w", err)
+	}
+
+	return nil
+}
+
+func (s *pgStorage) CheckUserExists(ctx context.Context, userID string) (exists bool, err error) {
+	const q = `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)`
+
+	var userUIID pgtype.UUID
+	if err := userUIID.Scan(userID); err != nil {
+		return false, fmt.Errorf("неверный формат ID пользователя %q: %w", userID, err)
+	}
+
+	err = s.db.QueryRow(ctx, q, userUIID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("ошибка запроса пользователя с ID = %v: %w", userID, err)
+	}
+
+	return
+}
+
+func (s *pgStorage) CreateUser(ctx context.Context) (string, error) {
+	const q = `INSERT INTO users DEFAULT VALUES RETURNING id`
+
+	var id pgtype.UUID
+	if err := s.db.QueryRow(ctx, q).Scan(&id); err != nil {
+		return "", fmt.Errorf("ошибка добавления пользователя в БД: %w", err)
+	}
+
+	return id.String(), nil
+}
+
+func (s *pgStorage) ListUserURLs(ctx context.Context, userID string) (model.UserURLsRes, error) {
+	const q = `SELECT token, original_url
+               FROM shorten_urls
+               WHERE user_id = $1 AND is_deleted <> TRUE`
+
+	var userUIID pgtype.UUID
+	if err := userUIID.Scan(userID); err != nil {
+		return model.UserURLsRes{}, fmt.Errorf("неверный формат ID пользователя %q: %w", userID, err)
+	}
+
+	rows, err := s.db.Query(ctx, q, userUIID)
+	if err != nil {
+		return model.UserURLsRes{}, fmt.Errorf("ошибка запроса по URL для пользователя c ID %q: %w", userID, err)
+	}
+	defer rows.Close()
+
+	userURLs, err := pgx.CollectRows(rows, pgx.RowToStructByName[model.UserURLsResItem])
+	if err != nil {
+		return model.UserURLsRes{}, fmt.Errorf("ошибка обработки ответа от хранилища: %w", err)
+	}
+
+	return userURLs, nil
+}
+
+func (s *pgStorage) MarkUserURLsDeleted(ctx context.Context, batch ToMarkDeletedReqBatch) error {
+	if len(batch) == 0 {
+		return nil
+	}
+
+	var args []any
+	var parts []string
+	var userUIID pgtype.UUID
+
+	for i, u := range batch {
+		idx := i * 2
+		parts = append(parts, fmt.Sprintf("($%d, $%d::uuid)", idx+1, idx+2))
+
+		if err := userUIID.Scan(u.UserID); err != nil {
+			return fmt.Errorf("неверный формат ID пользователя %q: %w", u.UserID, err)
+		}
+		args = append(args, u.Token, userUIID)
+	}
+
+	qMarkDeleted := `UPDATE shorten_urls AS u
+		             SET is_deleted = TRUE
+		             FROM (VALUES ` + strings.Join(parts, ", ") + `) AS v(token, user_id)
+		             WHERE u.token = v.token AND u.user_id = v.user_id`
+
+	if _, err := s.db.Exec(ctx, qMarkDeleted, args...); err != nil {
+		return fmt.Errorf("ошибка выполнения запроса: %w", err)
 	}
 
 	return nil

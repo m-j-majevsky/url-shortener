@@ -16,6 +16,12 @@
 cmd/shortener/main
 cmd/shortener/shortener
 
+# Examples and snippets
+cmd/misc/*
+
+# Some attempts left unused
+internal/trash/*
+
 # Dependency directories (remove the comment below to include it)
 vendor/
 
@@ -25,3 +31,5 @@ vendor/
 
 # Rest files
 batch_req.json
+emergency_dead_letter.log
+storage_state.json

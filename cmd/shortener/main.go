@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -33,19 +34,22 @@ func main() {
 	}
 	defer logger.Log.Sync()
 
+	// Создаём контекст с возможностью отмены по сигналу для корректного завершения
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	var localStorage *repository.LocalStorage
 	var saveStateMode bool
-	backgroundCtx := context.Background()
 
 	if cfg.DatabaseDSN != "" {
-		pool, err := createPool(backgroundCtx, cfg.DatabaseDSN)
+		pool, err := createPool(ctx, cfg.DatabaseDSN)
 		if err != nil {
 			logger.Log.Fatal(err.Error(), zap.String("event", "creating database connection pool"))
 		}
 		defer pool.Close()
 
 		// Накатываем миграции
-		if err := migrations.RunMigrations(backgroundCtx, cfg.DatabaseDSN); err != nil {
+		if err := migrations.RunMigrations(ctx, cfg.DatabaseDSN); err != nil {
 			logger.Log.Fatal(err.Error(), zap.String("event", "executing migrations"))
 		}
 
@@ -61,38 +65,61 @@ func main() {
 		logger.Log.Info("Local storage mode is on", zap.String("event", "preparing storage"))
 	}
 
-	handler, err := makeServiceAndRouter(cfg)
-	if err != nil {
-		logger.Log.Fatal(err.Error(), zap.String("event", "initializing service"))
-	}
-
-	// Создаем сервер явно, поскольку ссылку на него придется использовать для shutdown'а по сигналу от ОС
-	server := &http.Server{
-		Addr:    cfg.ServerRunAddress,
-		Handler: handler,
-	}
-
-	// Сам сервер запускаем фоном
-	go listenAndServe(server)
-
-	// Создаём контекст с возможностью отмены для корректного завершения
-	ctx, cancel := context.WithCancel(backgroundCtx)
-	defer cancel()
-
-	// Создаем канал для обработки сигналов от ОС
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	// Запускаем фоном обработчик сигналов SIGINT/SIGTERM
-	go handleShutdownSignals(cfg, cancel, server, sigChan)
-
 	if saveStateMode && cfg.FileStoragePath != "" {
 		// Режим сохранения локального хранилища в файл
 		defer saveStateDeferred(localStorage, cfg.FileStoragePath)
 	}
 
+	// Создаем канал для обработки сигналов от ОС
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	service, router, err := makeServiceAndRouter(cfg)
+	if err != nil {
+		logger.Log.Fatal(err.Error(), zap.String("event", "initializing service"))
+	}
+	defer service.CleanUp()
+
+	// Настраиваем глобальную систему канализации и обработки запросов на удаление записей (DELETE /api/user/urls)
+	var backgroundWg sync.WaitGroup
+	backgroundWg.Add(1)
+	go func() {
+		defer backgroundWg.Done()
+		service.StartItemsDeletionProcessor(ctx)
+	}()
+
+	// Создаем сервер явно, поскольку ссылку на него придется использовать для shutdown'а по сигналу от ОС
+	server := &http.Server{
+		Addr:    cfg.ServerRunAddress,
+		Handler: router,
+	}
+
+	// Сам сервер запускаем фоном
+	go listenAndServe(server)
+
 	// Блокируем main, пока не придёт сигнал
 	<-ctx.Done()
+
+	// Инициируем graceful shutdown
+	event := zap.String("event", "shutdown on signal")
+	logger.Log.Info("Shutdown signal received", zap.String("cause", context.Cause(ctx).Error()), event)
+
+	shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	defer shutdownRelease()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.Log.Error("Graceful shutdown timed out", zap.Error(err), event)
+	} else {
+		logger.Log.Info("HTTP server stopped gracefully", event)
+	}
+
+	// Закрываем канал для мягкой остановки глобального процесса канализации и обработки
+	// запросов на удаление записей (DELETE /api/user/urls)
+	service.StopItemsDeletionProcessor()
+	logger.Log.Info("Deletion processor input queue channel closed", event)
+
+	// Дожидаемся окончания обработки данных в канале, их сохранения или логирования ошибки
+	backgroundWg.Wait()
 
 	logger.Log.Info("Application shutting down gracefully", zap.String("event", "shutdown complete"))
 }
@@ -142,32 +169,6 @@ func loadLocalStorage(storagePath string) (*repository.LocalStorage, bool, error
 	return nil, false, err
 }
 
-// Обработка сигналов SIGINT/SIGTERM
-func handleShutdownSignals(
-	cfg config.ApplicationConfig,
-	cancel context.CancelFunc,
-	server *http.Server,
-	sigChan <-chan os.Signal,
-) {
-	sig := <-sigChan
-
-	event := zap.String("event", "shutdown on signal")
-
-	logger.Log.Info("Shutdown signal received", zap.String("signal", sig.String()), event)
-
-	// Graceful shutdown сервера
-	shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
-	defer shutdownRelease()
-
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		logger.Log.Error("Graceful shutdown timed out", zap.Error(err), event)
-	} else {
-		logger.Log.Info("HTTP server stopped gracefully", event)
-	}
-
-	cancel()
-}
-
 // Для сохранения состояния локального хранилища в файл по завершении работы сервиса (предполагается defer вызов)
 func saveStateDeferred(storage *repository.LocalStorage, path string) {
 	event := zap.String("event", "deferred state saving")
@@ -178,17 +179,18 @@ func saveStateDeferred(storage *repository.LocalStorage, path string) {
 	}
 }
 
-func makeServiceAndRouter(cfg config.ApplicationConfig) (http.Handler, error) {
+func makeServiceAndRouter(cfg config.ApplicationConfig) (*service.Shortener, http.Handler, error) {
 	svc, err := service.NewShortener(cfg.ServiceConfig)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	handler := logger.WithLogging(
-		handler.GzipMiddleware(
-			handler.NewRouter(svc, cfg.TargetBaseURL)))
+	rt, err := handler.NewRouter(handler.NewRouterParams(cfg, svc))
+	if err != nil {
+		return nil, nil, err
+	}
 
-	return handler, nil
+	return svc, rt, nil
 }
 
 // Создаем сервис и запускаем HTTP-сервер
