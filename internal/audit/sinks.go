@@ -13,15 +13,8 @@ import (
 
 const (
 	// ContentTypeJSON — Content-Type для отправки событий на удалённый приёмник.
-	// Захардкожен, чтобы не тянуть зависимость от пакета handler
-	// (audit не зависит ни от каких других пакетов проекта).
+	// Захардкожен, чтобы не тянуть зависимость от пакета handler.
 	ContentTypeJSON = "application/json"
-
-	// maxConcurrentSends — ограничение количества одновременных POST-запросов
-	// к удалённому приёмнику (выбранный вариант управления производительностью).
-	// Медленный или недоступный приёмник не может породить неограниченное
-	// число одновременных соединений: лишние отправки ждут своей очереди на семафоре.
-	maxConcurrentSends = 4
 
 	// sendTimeout — таймаут одной отправки на удалённый приёмник.
 	sendTimeout = 5 * time.Second
@@ -30,7 +23,7 @@ const (
 // FileSink — приёмник аудита, дописывающий события в конец файла
 // (каждое событие — отдельная строка с JSON-объектом).
 type FileSink struct {
-	mu   sync.Mutex // защита от конкурентных дописываний из нескольких горутин
+	mu   sync.Mutex // защита от конкурентных дописываний в файл
 	file *os.File
 }
 
@@ -51,15 +44,13 @@ func (fs *FileSink) Send(event AuditEvent) error {
 	if err != nil {
 		return fmt.Errorf("cannot marshal audit event: %w", err)
 	}
+	data = append(data, '\n')
 
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 
 	if _, err := fs.file.Write(data); err != nil {
 		return fmt.Errorf("cannot write audit event to file: %w", err)
-	}
-	if _, err := fs.file.WriteString("\n"); err != nil {
-		return fmt.Errorf("cannot write newline after audit event: %w", err)
 	}
 	return nil
 }
@@ -74,15 +65,13 @@ func (fs *FileSink) Close() error {
 type HTTPSink struct {
 	url    string
 	client *http.Client
-	sem    chan struct{} // семафор, ограничивающий одновременные отправки
 }
 
-// NewHTTPSink создаёт приёмник с ограничением одновременных отправок.
+// NewHTTPSink создаёт приёмник с ограничением по времени одной отправки.
 func NewHTTPSink(url string) *HTTPSink {
 	return &HTTPSink{
 		url:    url,
 		client: &http.Client{Timeout: sendTimeout},
-		sem:    make(chan struct{}, maxConcurrentSends),
 	}
 }
 
@@ -92,10 +81,6 @@ func (hs *HTTPSink) Send(event AuditEvent) error {
 	if err != nil {
 		return fmt.Errorf("cannot marshal audit event: %w", err)
 	}
-
-	// Ограничиваем число одновременных запросов семафором
-	hs.sem <- struct{}{}
-	defer func() { <-hs.sem }()
 
 	resp, err := hs.client.Post(hs.url, ContentTypeJSON, bytes.NewReader(data))
 	if err != nil {

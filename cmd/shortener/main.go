@@ -94,10 +94,6 @@ func main() {
 		defer saveStateDeferred(localStorage, cfg.FileStoragePath)
 	}
 
-	// Создаем канал для обработки сигналов от ОС
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
 	service, router, err := makeServiceAndRouter(cfg, auditor)
 	if err != nil {
 		logger.Log.Fatal(err.Error(), zap.String("event", "initializing service"))

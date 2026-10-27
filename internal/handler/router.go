@@ -1,12 +1,14 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	valid "github.com/asaskevich/govalidator/v12"
@@ -325,14 +327,14 @@ func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) 
 	}
 
 	bodyBytes, err := io.ReadAll(r.Body)
-
 	if err != nil {
 		logger.Log.Debug("error reading request body", zap.Error(err))
 		http.Error(w, "ошибка чтения тела запроса", http.StatusBadRequest)
 		return
 	}
 
-	if len(bodyBytes) == 0 {
+	body := strings.TrimSpace(string(bodyBytes))
+	if len(body) == 0 {
 		logger.Log.Debug("cannot process request with empty body")
 		http.Error(w, "тело запроса не может быть пустым", http.StatusBadRequest)
 		return
@@ -342,7 +344,7 @@ func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) 
 	defer cancel()
 
 	resCode := http.StatusCreated
-	token, shortenerErr := rt.service.GenerateAndStore(ctx, string(bodyBytes), userID)
+	token, shortenerErr := rt.service.GenerateAndStore(ctx, body, userID)
 	if shortenerErr != nil {
 		var eoue *repository.ErrOriginalURLExists
 		if errors.As(shortenerErr, &eoue) {
@@ -364,7 +366,7 @@ func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) 
 	// Аудит: запрос обработан успешно — отправляем shorten-событие с оригинальным URL.
 	// Успешной считается и обработка с ответом 409 Conflict: ссылка зарегистрирована,
 	// клиент получил короткий URL.
-	rt.notifyAudit(audit.ActionShorten, userID, string(bodyBytes))
+	rt.notifyAudit(audit.ActionShorten, userID, body)
 }
 
 // Путь "/api/shorten", POST
@@ -414,14 +416,21 @@ func (rt *Router) shortenLongURLForJSON(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	w.WriteHeader(resCode)
 	resp := model.ShortenRes{
 		Result: fmt.Sprintf("%s/%s", rt.baseURL, token),
 	}
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
+	// Сначала сериализуем ответ в буфер: если кодирование не удалось,
+	// ещё можно честно ответить 500, не отправив заголовок с кодом 201.
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(resp); err != nil {
 		logger.Log.Debug("error encoding response", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
+	}
+
+	w.WriteHeader(resCode)
+	if _, err := buf.WriteTo(w); err != nil {
+		logger.Log.Debug("error writing response body", zap.Error(err))
 	}
 
 	// Аудит: запрос обработан успешно — отправляем shorten-событие с оригинальным URL.
