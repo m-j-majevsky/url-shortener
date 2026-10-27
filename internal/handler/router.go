@@ -51,7 +51,6 @@ type URLShortener interface {
 	MarkUserURLsDeleted(ctx context.Context, batch model.TokensToMarkDeleted, userID string) error
 }
 
-
 type StoragePinger interface {
 	Ping(ctx context.Context) error
 }
@@ -82,18 +81,20 @@ func NewUserCookieParams(cfg config.ApplicationConfig) UserCookieParams {
 
 type RouterParams struct {
 	Service     URLShortener
-	UserStorage UserStorage    // для CookieMiddleware: регистрация/проверка пользователя
-	Pinger      StoragePinger  // необязательный; nil — /ping не обслуживается
+	UserStorage UserStorage   // для CookieMiddleware: регистрация/проверка пользователя
+	Pinger      StoragePinger // необязательный; nil — /ping не обслуживается
+	Logger      *zap.Logger
 	BaseURL     string
 	UserCookie  UserCookieParams
 	Auditor     audit.Notifier // nil (значение по умолчанию) означает, что аудит отключён.
 }
 
-func NewRouterParams(cfg config.ApplicationConfig, svc URLShortener, us UserStorage, pinger StoragePinger, auditor audit.Notifier) RouterParams {
+func NewRouterParams(cfg config.ApplicationConfig, svc URLShortener, us UserStorage, pinger StoragePinger, auditor audit.Notifier, log *zap.Logger) RouterParams {
 	return RouterParams{
 		Service:     svc,
 		UserStorage: us,
 		Pinger:      pinger,
+		Logger:      log,
 		BaseURL:     cfg.TargetBaseURL,
 		UserCookie:  NewUserCookieParams(cfg),
 		Auditor:     auditor,
@@ -110,6 +111,7 @@ type Router struct {
 	userIDKey contextKey
 	uiHandler UndeletedItemsHandler
 	auditor   audit.Notifier // рассылка событий аудита; nil — аудит отключён
+	log       *zap.Logger
 }
 
 func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -129,9 +131,14 @@ var (
 )
 
 func NewRouter(params RouterParams) (*Router, error) {
+	log := params.Logger
+	if log == nil {
+		log = zap.NewNop()
+	}
+
 	cr := chi.NewRouter()
 
-	cr.Use(logger.WithLogging)
+	cr.Use(logger.WithLogging(log))
 	cr.Use(GzipMiddleware)
 
 	us := params.UserStorage
@@ -150,6 +157,7 @@ func NewRouter(params RouterParams) (*Router, error) {
 		userIDKey: params.UserCookie.userIDKey,
 		uiHandler: uih,
 		auditor:   params.Auditor,
+		log:       log,
 	}
 
 	// Текстовый API
@@ -157,7 +165,7 @@ func NewRouter(params RouterParams) (*Router, error) {
 		r.Use(func(next http.Handler) http.Handler {
 			return responseContentTypeMiddleware(next, TextPlain)
 		})
-		r.Use(CookieMiddleware(us, params.UserCookie))
+		r.Use(CookieMiddleware(mux.log, us, params.UserCookie))
 
 		r.Post("/", mux.shortenLongURLForText)
 	})
@@ -167,7 +175,7 @@ func NewRouter(params RouterParams) (*Router, error) {
 		r.Use(func(next http.Handler) http.Handler {
 			return responseContentTypeMiddleware(next, AppJSON)
 		})
-		r.Use(CookieMiddleware(us, params.UserCookie))
+		r.Use(CookieMiddleware(mux.log, us, params.UserCookie))
 
 		r.Route("/user/urls", func(rr chi.Router) {
 			rr.Get("/", mux.getUserURLs)
@@ -181,10 +189,10 @@ func NewRouter(params RouterParams) (*Router, error) {
 	cr.Get("/{token}", mux.resolveShortURL)
 
 	if mux.pinger != nil {
-		logger.Log.Info("service supports request for " + pingPath)
+		mux.log.Info("service supports request for " + pingPath)
 		cr.Get(pingPath, mux.pingDB)
 	} else {
-		logger.Log.Info("service doesn't support request for " + pingPath)
+		mux.log.Info("service doesn't support request for " + pingPath)
 		cr.Get(pingPath, badRequestWithWrongPath)
 	}
 
@@ -193,9 +201,6 @@ func NewRouter(params RouterParams) (*Router, error) {
 
 	return mux, nil
 }
-
-
-
 
 func (rt *Router) getUserIDFromContext(ctx context.Context) (val string, err error) {
 	val, found := ctx.Value(rt.userIDKey).(string)
@@ -224,7 +229,7 @@ func (rt *Router) notifyAudit(action, userID, url string) {
 
 func (rt *Router) pingDB(w http.ResponseWriter, r *http.Request) {
 	if rt.pinger == nil {
-		logger.Log.Error("ping storage is not supported")
+		rt.log.Error("ping storage is not supported")
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -234,7 +239,7 @@ func (rt *Router) pingDB(w http.ResponseWriter, r *http.Request) {
 
 	err := rt.pinger.Ping(ctx)
 	if err != nil {
-		logger.Log.Error("database ping failed", zap.Error(err))
+		rt.log.Error("database ping failed", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -247,7 +252,7 @@ func (rt *Router) pingDB(w http.ResponseWriter, r *http.Request) {
 func (rt *Router) resolveShortURL(w http.ResponseWriter, r *http.Request) {
 	token := chi.URLParam(r, "token")
 	if err := enc.IsValidBase62(token); err != nil {
-		logger.Log.Debug("error validating URL token", zap.Error(err))
+		rt.log.Debug("error validating URL token", zap.Error(err))
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -270,19 +275,19 @@ func (rt *Router) resolveShortURL(w http.ResponseWriter, r *http.Request) {
 
 	var etnf *service.ErrTokenNotFound
 	if errors.As(err, &etnf) {
-		logger.Log.Debug(fmt.Sprintf("token %s not found", token), zap.Error(etnf))
+		rt.log.Debug(fmt.Sprintf("token %s not found", token), zap.Error(etnf))
 		http.Error(w, "URL не зарегистрирован", http.StatusBadRequest)
 		return
 	}
 
 	var erid *service.ErrTokenIsDeleted
 	if errors.As(err, &erid) {
-		logger.Log.Debug(fmt.Sprintf("token %s is deleted", token), zap.Error(erid))
+		rt.log.Debug(fmt.Sprintf("token %s is deleted", token), zap.Error(erid))
 		http.Error(w, fmt.Sprintf("Токен %s удален", erid.Token), http.StatusGone)
 		return
 	}
 
-	logger.Log.Debug("error resolving token "+token, zap.Error(err))
+	rt.log.Debug("error resolving token "+token, zap.Error(err))
 	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 }
 
@@ -291,7 +296,7 @@ func (rt *Router) resolveShortURL(w http.ResponseWriter, r *http.Request) {
 func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) {
 	userID, err := rt.getUserIDFromContext(r.Context())
 	if err != nil {
-		logger.Log.Debug("error reading request context", zap.Error(err))
+		rt.log.Debug("error reading request context", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -301,14 +306,14 @@ func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) 
 
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		logger.Log.Debug("error reading request body", zap.Error(err))
+		rt.log.Debug("error reading request body", zap.Error(err))
 		http.Error(w, "ошибка чтения тела запроса", http.StatusBadRequest)
 		return
 	}
 
 	body := strings.TrimSpace(string(bodyBytes))
 	if len(body) == 0 {
-		logger.Log.Debug("cannot process request with empty body")
+		rt.log.Debug("cannot process request with empty body")
 		http.Error(w, "тело запроса не может быть пустым", http.StatusBadRequest)
 		return
 	}
@@ -326,7 +331,7 @@ func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) 
 			resCode = http.StatusConflict
 		} else {
 			// Прочие конфликты и ошибки считаются внутренней проблемой сервиса
-			logger.Log.Debug("error providing short URL", zap.Error(shortenerErr))
+			rt.log.Debug("error providing short URL", zap.Error(shortenerErr))
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
@@ -347,13 +352,13 @@ func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) 
 func (rt *Router) shortenLongURLForJSON(w http.ResponseWriter, r *http.Request) {
 	userID, err := rt.getUserIDFromContext(r.Context())
 	if err != nil {
-		logger.Log.Debug("error reading request context", zap.Error(err))
+		rt.log.Debug("error reading request context", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
 	if rct := r.Header.Get(ContentType); rct != AppJSON {
-		logger.Log.Debug("wrong request Content-Type: " + rct)
+		rt.log.Debug("wrong request Content-Type: " + rct)
 		http.Error(w, "ожидается запрос с заголовком Content-Type: application/json", http.StatusBadRequest)
 		return
 	}
@@ -363,12 +368,12 @@ func (rt *Router) shortenLongURLForJSON(w http.ResponseWriter, r *http.Request) 
 
 	var req model.ShortenReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logger.Log.Debug("cannot decode request JSON body", zap.Error(err))
+		rt.log.Debug("cannot decode request JSON body", zap.Error(err))
 		http.Error(w, "ожидается валидный JSON объект в теле запроса", http.StatusBadRequest)
 		return
 	}
 	if isValidReqBody, validatorErr := valid.ValidateStruct(req); validatorErr != nil || !isValidReqBody {
-		logger.Log.Debug("request validation error", zap.Error(validatorErr))
+		rt.log.Debug("request validation error", zap.Error(validatorErr))
 		http.Error(w, `в теле запроса ожидается JSON объект c ключом "url" и корректным значением в нем`, http.StatusBadRequest)
 		return
 	}
@@ -386,7 +391,7 @@ func (rt *Router) shortenLongURLForJSON(w http.ResponseWriter, r *http.Request) 
 			resCode = http.StatusConflict
 		} else {
 			// Прочие конфликты и ошибки считаются внутренней проблемой сервиса
-			logger.Log.Debug("error providing short URL", zap.Error(shortenerErr))
+			rt.log.Debug("error providing short URL", zap.Error(shortenerErr))
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
@@ -399,14 +404,14 @@ func (rt *Router) shortenLongURLForJSON(w http.ResponseWriter, r *http.Request) 
 	// ещё можно честно ответить 500, не отправив заголовок с кодом 201.
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(resp); err != nil {
-		logger.Log.Debug("error encoding response", zap.Error(err))
+		rt.log.Debug("error encoding response", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(resCode)
 	if _, err := buf.WriteTo(w); err != nil {
-		logger.Log.Debug("error writing response body", zap.Error(err))
+		rt.log.Debug("error writing response body", zap.Error(err))
 	}
 
 	// Аудит: запрос обработан успешно — отправляем shorten-событие с оригинальным URL.
@@ -420,13 +425,13 @@ func (rt *Router) shortenLongURLForJSON(w http.ResponseWriter, r *http.Request) 
 func (rt *Router) shortenBatch(w http.ResponseWriter, r *http.Request) {
 	userID, err := rt.getUserIDFromContext(r.Context())
 	if err != nil {
-		logger.Log.Debug("error reading request context", zap.Error(err))
+		rt.log.Debug("error reading request context", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
 	if rct := r.Header.Get(ContentType); rct != AppJSON {
-		logger.Log.Debug("wrong request Content-Type: " + rct)
+		rt.log.Debug("wrong request Content-Type: " + rct)
 		http.Error(w, "ожидается запрос с заголовком Content-Type: application/json", http.StatusBadRequest)
 		return
 	}
@@ -436,12 +441,12 @@ func (rt *Router) shortenBatch(w http.ResponseWriter, r *http.Request) {
 
 	var batchReq model.BatchShortenReq
 	if err := json.NewDecoder(r.Body).Decode(&batchReq); err != nil {
-		logger.Log.Debug("cannot decode request JSON body", zap.Error(err))
+		rt.log.Debug("cannot decode request JSON body", zap.Error(err))
 		http.Error(w, "ожидается валидный JSON объект в теле запроса", http.StatusBadRequest)
 		return
 	}
 	if err := validateBatchReq(batchReq); err != nil {
-		logger.Log.Debug("request validation error", zap.Error(err))
+		rt.log.Debug("request validation error", zap.Error(err))
 		http.Error(w, `в теле запроса ожидается JSON c массивом объектов, имеющих ключи correlation_id (строка) и original_url (валидный URL)`, http.StatusBadRequest)
 		return
 	}
@@ -451,7 +456,7 @@ func (rt *Router) shortenBatch(w http.ResponseWriter, r *http.Request) {
 
 	batchRes, err := rt.service.BatchStore(ctx, batchReq, userID)
 	if err != nil {
-		logger.Log.Debug("error providing batch of short URLs", zap.Error(err))
+		rt.log.Debug("error providing batch of short URLs", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -459,7 +464,7 @@ func (rt *Router) shortenBatch(w http.ResponseWriter, r *http.Request) {
 	setBaseForShortenBatch(rt.baseURL, batchRes)
 	w.WriteHeader(getShortenBatchStatusCode(batchRes))
 	if err := json.NewEncoder(w).Encode(batchRes); err != nil {
-		logger.Log.Debug("error encoding response", zap.Error(err))
+		rt.log.Debug("error encoding response", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -494,7 +499,7 @@ func setBaseForShortenBatch(baseURL string, batch model.BatchShortenRes) {
 func (rt *Router) getUserURLs(w http.ResponseWriter, r *http.Request) {
 	userID, err := rt.getUserIDFromContext(r.Context())
 	if err != nil {
-		logger.Log.Debug("error reading request context", zap.Error(err))
+		rt.log.Debug("error reading request context", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -504,7 +509,7 @@ func (rt *Router) getUserURLs(w http.ResponseWriter, r *http.Request) {
 
 	res, err := rt.service.ListUserURLs(ctx, userID)
 	if err != nil {
-		logger.Log.Debug("error providing shortened URLs for user "+userID, zap.Error(err))
+		rt.log.Debug("error providing shortened URLs for user "+userID, zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -514,7 +519,7 @@ func (rt *Router) getUserURLs(w http.ResponseWriter, r *http.Request) {
 		setBaseForUserURLs(rt.baseURL, res)
 		err := json.NewEncoder(w).Encode(res)
 		if err != nil {
-			logger.Log.Debug("error encoding response", zap.Error(err))
+			rt.log.Debug("error encoding response", zap.Error(err))
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
@@ -541,13 +546,13 @@ func setBaseForUserURLs(baseURL string, res model.UserURLsRes) {
 func (rt *Router) markUserURLsDeleted(w http.ResponseWriter, r *http.Request) {
 	userID, err := rt.getUserIDFromContext(r.Context())
 	if err != nil {
-		logger.Log.Debug("error reading request context", zap.Error(err))
+		rt.log.Debug("error reading request context", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
 	if rct := r.Header.Get(ContentType); rct != AppJSON {
-		logger.Log.Debug("wrong request Content-Type: " + rct)
+		rt.log.Debug("wrong request Content-Type: " + rct)
 		http.Error(w, "ожидается запрос с заголовком Content-Type: application/json", http.StatusBadRequest)
 		return
 	}
@@ -557,12 +562,12 @@ func (rt *Router) markUserURLsDeleted(w http.ResponseWriter, r *http.Request) {
 
 	var batchReq model.TokensToMarkDeleted
 	if err := json.NewDecoder(r.Body).Decode(&batchReq); err != nil {
-		logger.Log.Debug("cannot decode request JSON body", zap.Error(err))
+		rt.log.Debug("cannot decode request JSON body", zap.Error(err))
 		http.Error(w, "ожидается валидный JSON с массивом строк в теле запроса", http.StatusBadRequest)
 		return
 	}
-	if err := validateTokensToBeDeleted(batchReq); err != nil {
-		logger.Log.Debug("request validation error", zap.Error(err))
+	if err := rt.validateTokensToBeDeleted(batchReq); err != nil {
+		rt.log.Debug("request validation error", zap.Error(err))
 		http.Error(w, `в теле запроса ожидается JSON c массивом строк из Base62 символов`, http.StatusBadRequest)
 		return
 	}
@@ -571,12 +576,12 @@ func (rt *Router) markUserURLsDeleted(w http.ResponseWriter, r *http.Request) {
 		// В вызванном методе возможны ошибки, только если канал для удаления записей переполнен,
 		// и тогда err будет содержать service.ErrTokenLeftUndeleted для каждой непопавшей в канал записи из batchReq.
 
-		logger.Log.Debug("error while deleting data", zap.Error(err))
+		rt.log.Debug("error while deleting data", zap.Error(err))
 
 		// Добавляем в лог неудаленные записи во избежание потери запросов
 		loggingErr := rt.uiHandler.HandleErrTokenLeftUndeletedAndLogData(err)
 		if loggingErr != nil {
-			logger.Log.Error("error while logging undeleted items", zap.Error(loggingErr), zap.String("event", "critical error"))
+			rt.log.Error("error while logging undeleted items", zap.Error(loggingErr), zap.String("event", "critical error"))
 		}
 
 		http.Error(w, "Сервер перегружен; запрос на удаление сохранен для последующей обработки", http.StatusAccepted)
@@ -586,10 +591,10 @@ func (rt *Router) markUserURLsDeleted(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func validateTokensToBeDeleted(batch model.TokensToMarkDeleted) error {
+func (rt *Router) validateTokensToBeDeleted(batch model.TokensToMarkDeleted) error {
 	for _, item := range batch {
 		if err := enc.IsValidBase62(item); err != nil {
-			logger.Log.Debug("error validating URL token", zap.Error(err))
+			rt.log.Debug("error validating URL token", zap.Error(err))
 			return err
 		}
 	}

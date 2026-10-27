@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"go.uber.org/zap"
 )
 
 // Compile-time assertion: Broadcaster реализует интерфейс Notifier.
@@ -95,8 +96,8 @@ func TestNotify_NilReceiverAndNoSinks(t *testing.T) {
 		b    *Broadcaster
 	}{
 		{name: "nil broadcaster", b: nil},
-		{name: "no observers", b: NewBroadcaster()},
-		{name: "only nil observers", b: NewBroadcaster(nil, nil)},
+		{name: "no observers", b: NewBroadcaster(zap.NewNop())},
+		{name: "only nil observers", b: NewBroadcaster(zap.NewNop(), nil, nil)},
 	}
 
 	for _, tt := range tests {
@@ -116,7 +117,7 @@ func TestNotify_NilReceiverAndNoSinks(t *testing.T) {
 func TestBroadcaster_NilObserverSkipped(t *testing.T) {
 	fast := newFastObserver(16)
 
-	b := NewBroadcaster(nil, fast)
+	b := NewBroadcaster(zap.NewNop(), nil, fast)
 	defer b.Close()
 
 	b.Notify(testEvent(1))
@@ -136,7 +137,7 @@ func (s *BroadcasterSuite) TestDispatchesToAllObservers() {
 	first := newFastObserver(16)
 	second := newFastObserver(16)
 
-	b := NewBroadcaster(first, second)
+	b := NewBroadcaster(zap.NewNop(), first, second)
 
 	want := testEvent(7)
 	b.Notify(want)
@@ -157,7 +158,7 @@ func (s *BroadcasterSuite) TestSlowObserverDoesNotBlockOthers() {
 	slow := newSlowObserver(64)
 	fast := newFastObserver(64)
 
-	b := NewBroadcaster(slow, fast)
+	b := NewBroadcaster(zap.NewNop(), slow, fast)
 	defer b.Close()
 
 	const total = 10
@@ -190,7 +191,7 @@ func (s *BroadcasterSuite) TestSlowObserverDoesNotBlockOthers() {
 func (s *BroadcasterSuite) TestQueueOverflowDropsEvent() {
 	stuck := newSlowObserver(128) // застрянет в Send до разблокировки
 
-	b := NewBroadcaster(stuck)
+	b := NewBroadcaster(zap.NewNop(), stuck)
 
 	// Отправляем больше событий, чем вмещает личная очередь наблюдателя:
 	// часть обязана быть отброшена, пока воркер застрял в Send.
@@ -229,7 +230,7 @@ func (s *BroadcasterSuite) TestQueueOverflowDropsEvent() {
 func (s *BroadcasterSuite) TestNotifyAfterClose() {
 	observer := newFastObserver(16)
 
-	b := NewBroadcaster(observer)
+	b := NewBroadcaster(zap.NewNop(), observer)
 	b.Close()
 
 	require.NotPanics(s.T(), func() {
@@ -253,7 +254,7 @@ func (s *BroadcasterSuite) TestCloseTwiceAndWaitConcurrently() {
 	first := newFastObserver(64)
 	second := newFastObserver(64)
 
-	b := NewBroadcaster(first, second)
+	b := NewBroadcaster(zap.NewNop(), first, second)
 
 	const total = 20
 	for i := 0; i < total; i++ {
@@ -280,7 +281,7 @@ func (s *BroadcasterSuite) TestCloseTwiceAndWaitConcurrently() {
 // TestBroadcaster_EmptyObservers проверяет субъект без наблюдателей:
 // Close завершается мгновенно (воркеров нет), Notify — no-op.
 func (s *BroadcasterSuite) TestEmptyObservers() {
-	b := NewBroadcaster() // наблюдателей нет: аудит «выключен»
+	b := NewBroadcaster(zap.NewNop()) // наблюдателей нет: аудит «выключен»
 
 	start := time.Now()
 	b.Notify(testEvent(1))
@@ -302,7 +303,7 @@ func (s *BroadcasterSuite) TestEmptyObservers() {
 func (s *BroadcasterSuite) TestCloseDrainsPendingEvents() {
 	observer := newFastObserver(observerQueueCap)
 
-	b := NewBroadcaster(observer)
+	b := NewBroadcaster(zap.NewNop(), observer)
 
 	for i := 0; i < observerQueueCap; i++ {
 		b.Notify(testEvent(i))

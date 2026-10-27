@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/m-j-majevsky/url-shortener/internal/auth"
-	"github.com/m-j-majevsky/url-shortener/internal/logger"
 	"go.uber.org/zap"
 )
 
@@ -157,7 +156,7 @@ func isValidRequestContentType(ct string) bool {
 
 // Функциональность установки-извлечения cookie с ID пользователя
 
-func CookieMiddleware(storage UserStorage, params UserCookieParams) func(http.Handler) http.Handler {
+func CookieMiddleware(log *zap.Logger, storage UserStorage, params UserCookieParams) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var userID string
@@ -189,14 +188,14 @@ func CookieMiddleware(storage UserStorage, params UserCookieParams) func(http.Ha
 			if setNewCookie {
 				userID, err = storage.CreateUser(r.Context())
 				if err != nil {
-					logger.Log.Error("user creating failed", zap.Error(err))
+					log.Error("user creating failed", zap.Error(err))
 					w.WriteHeader(http.StatusInternalServerError)
 					return
 				}
 
 				responseCookieValue, err := auth.GenerateUserIDJWT(userID, params.UserCookieTTL, params.SigningKey)
 				if err != nil {
-					logger.Log.Error("JWT encrypting failed", zap.Error(err))
+					log.Error("JWT encrypting failed", zap.Error(err))
 					w.WriteHeader(http.StatusInternalServerError)
 					return
 				}
@@ -214,7 +213,7 @@ func CookieMiddleware(storage UserStorage, params UserCookieParams) func(http.Ha
 				// userID содержит непустое значение. Проверим его
 				found, err := storage.CheckUserExists(r.Context(), userID)
 				if err != nil {
-					logger.Log.Error("user check in storage failed", zap.Error(err))
+					log.Error("user check in storage failed", zap.Error(err))
 					w.WriteHeader(http.StatusInternalServerError)
 					return
 				}

@@ -11,7 +11,6 @@ import (
 
 	"github.com/m-j-majevsky/url-shortener/internal/crypto"
 	"github.com/m-j-majevsky/url-shortener/internal/encoding"
-	"github.com/m-j-majevsky/url-shortener/internal/logger"
 	"github.com/m-j-majevsky/url-shortener/internal/model"
 	"github.com/m-j-majevsky/url-shortener/internal/repository"
 	"go.uber.org/zap"
@@ -51,6 +50,7 @@ type ShortenerConfig struct {
 
 	DeadLetterLogFile string // имя файла, в который сохраняются пары (токен, юзер) не обработанные при запросе DELETE /api/user/urls
 
+	Logger *zap.Logger // логгер; если nil — используется no-op
 }
 
 func DefaultShortenerConfig() ShortenerConfig {
@@ -73,6 +73,8 @@ type Shortener struct {
 	deletionQueue          chan repository.ToMarkDeletedReqItem
 	deadLetterLogFile      *os.File
 	deadLetterLogFileMutex sync.Mutex
+
+	log *zap.Logger // логгер для сервиса
 }
 
 const errCfgHeader = "ошибка конфигурации сервиса"
@@ -103,9 +105,15 @@ func NewShortener(cfg ShortenerConfig) (*Shortener, error) {
 		return nil, fmt.Errorf("%s: размер батча удаляемых за раз записей должен быть неотрицательным", errCfgHeader)
 	}
 
+	log := cfg.Logger
+	if log == nil {
+		log = zap.NewNop()
+	}
+
 	shortener := &Shortener{
 		config:        cfg,
 		deletionQueue: make(chan repository.ToMarkDeletedReqItem, cfg.DeletionQueueBuffer),
+		log:           log,
 	}
 
 	return shortener, nil
@@ -440,7 +448,7 @@ func (s *Shortener) StartItemsDeletionProcessor(ctx context.Context) {
 			defer storageWg.Done()
 
 			if err := s.config.Storage.MarkUserURLsDeleted(ctx, batch); err != nil {
-				logger.Log.Info("storage error while running batch item deletion query", zap.Error(err))
+				s.log.Info("storage error while running batch item deletion query", zap.Error(err))
 				// Сохраняем в очередь данные, которые не удалось записать
 				s.writeToDeadLetterLog(NewUndeletedItemsFromReqBatch(batch))
 

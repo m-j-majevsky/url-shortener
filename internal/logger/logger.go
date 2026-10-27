@@ -8,17 +8,12 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-// Log будет доступен всему коду как синглтон.
-// Никакой код навыка, кроме функции Initialize, не должен модифицировать эту переменную.
-// По умолчанию установлен no-op-логер, который не выводит никаких сообщений.
-var Log *zap.Logger = zap.NewNop()
-
-// Initialize инициализирует синглтон логера с необходимым уровнем логирования.
-func Initialize(level string) error {
+// Initialize создаёт логер с необходимым уровнем логирования и возвращает его.
+func Initialize(level string) (*zap.Logger, error) {
 	// преобразуем текстовый уровень логирования в zap.AtomicLevel
 	lvl, err := zap.ParseAtomicLevel(level)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// создаём новую конфигурацию логера
 	cfg := zap.NewProductionConfig()
@@ -29,11 +24,9 @@ func Initialize(level string) error {
 	// создаём логер на основе конфигурации
 	zl, err := cfg.Build()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	// устанавливаем синглтон
-	Log = zl
-	return nil
+	return zl, nil
 }
 
 // Функционал логирования ответа от сервера
@@ -64,33 +57,37 @@ func (r *loggingResponseWriter) WriteHeader(statusCode int) {
 	r.responseData.status = statusCode // захватываем код статуса
 }
 
-// WithLogging — middleware-логер для входящих HTTP-запросов и ответов от сервера.
-func WithLogging(h http.Handler) http.Handler {
-	logFn := func(w http.ResponseWriter, r *http.Request) {
-		responseData := &responseData{
-			status: 0,
-			size:   0,
-		}
-		lw := loggingResponseWriter{
-			ResponseWriter: w, // встраиваем оригинальный http.ResponseWriter
-			responseData:   responseData,
-		}
+// WithLogging — middleware, логирующая входящие HTTP-запросы и ответы сервера.
+// Для каждого запроса выводит URI, метод, длительность обработки,
+// а затем код статуса и размер ответа.
+func WithLogging(log *zap.Logger) func(http.Handler) http.Handler {
+	return func(h http.Handler) http.Handler {
+		logFn := func(w http.ResponseWriter, r *http.Request) {
+			responseData := &responseData{
+				status: 0,
+				size:   0,
+			}
+			lw := loggingResponseWriter{
+				ResponseWriter: w, // встраиваем оригинальный http.ResponseWriter
+				responseData:   responseData,
+			}
 
-		start := time.Now()
-		h.ServeHTTP(&lw, r) // внедряем реализацию http.ResponseWriter
-		duration := time.Since(start)
+			start := time.Now()
+			h.ServeHTTP(&lw, r) // внедряем реализацию http.ResponseWriter
+			duration := time.Since(start)
 
-		// отправляем сведения о запросе в zap
-		Log.Info("incoming request",
-			zap.String("uri", r.RequestURI),
-			zap.String("method", r.Method),
-			zap.Duration("duration", duration),
-		)
-		// следом отправляем в zap сведения об ответе сервера
-		Log.Info("server response",
-			zap.Int("status", responseData.status), // получаем перехваченный код статуса ответа
-			zap.Int("size", responseData.size),     // получаем перехваченный размер ответа
-		)
+			// отправляем сведения о запросе в zap
+			log.Info("incoming request",
+				zap.String("uri", r.RequestURI),
+				zap.String("method", r.Method),
+				zap.Duration("duration", duration),
+			)
+			// следом отправляем в zap сведения об ответе сервера
+			log.Info("server response",
+				zap.Int("status", responseData.status), // получаем перехваченный код статуса ответа
+				zap.Int("size", responseData.size),     // получаем перехваченный размер ответа
+			)
+		}
+		return http.HandlerFunc(logFn)
 	}
-	return http.HandlerFunc(logFn)
 }

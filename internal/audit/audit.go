@@ -27,7 +27,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/m-j-majevsky/url-shortener/internal/logger"
 	"go.uber.org/zap"
 )
 
@@ -96,13 +95,20 @@ type Broadcaster struct {
 	// завершился по таймауту и хэндлеры в полёте продолжают вызывать Notify.
 	mu     sync.RWMutex
 	closed bool
+
+	log *zap.Logger // логгер; если nil — используется no-op
 }
 
 // NewBroadcaster создаёт субъект аудита с перечисленными наблюдателями
 // и запускает фиксированные воркеры: диспетчер и по одному на наблюдателя.
-func NewBroadcaster(observers ...Observer) *Broadcaster {
+func NewBroadcaster(log *zap.Logger, observers ...Observer) *Broadcaster {
+	if log == nil {
+		log = zap.NewNop()
+	}
+
 	b := &Broadcaster{
 		events: make(chan AuditEvent, eventQueueSize),
+		log:    log,
 	}
 
 	for _, obs := range observers {
@@ -122,7 +128,7 @@ func NewBroadcaster(observers ...Observer) *Broadcaster {
 			defer b.wg.Done()
 			for event := range p.queue {
 				if err := p.observer.Send(event); err != nil {
-					logger.Log.Error("audit event sending failed", zap.Error(err))
+					b.log.Error("audit event sending failed", zap.Error(err))
 				}
 			}
 		}(pipe)
@@ -158,7 +164,7 @@ func (b *Broadcaster) dispatch() {
 				// отбрасываем, чтобы медленный приёмник не задерживал диспетчер
 				// и доставку остальным приёмникам. Потеря фиксируется счётчиком.
 				b.dropped.Add(1)
-				logger.Log.Error("audit observer queue overflow, event dropped",
+				b.log.Error("audit observer queue overflow, event dropped",
 					zap.String("sink", fmt.Sprintf("%T", p.observer)))
 			}
 		}
@@ -189,7 +195,7 @@ func (b *Broadcaster) Notify(event AuditEvent) {
 		// Входной буфер переполнен: событие отбрасывается, чтобы не блокировать
 		// хэндлер. Потеря фиксируется счётчиком.
 		b.dropped.Add(1)
-		logger.Log.Error("audit event queue overflow, event dropped",
+		b.log.Error("audit event queue overflow, event dropped",
 			zap.Any("event", event))
 	}
 }
@@ -227,6 +233,6 @@ func (b *Broadcaster) Close() {
 	// по факту доставки, поэтому события, отброшенные до начала Close,
 	// в неё попадают.
 	if n := b.dropped.Load(); n > 0 {
-		logger.Log.Warn("audit events dropped during runtime", zap.Int64("dropped", n))
+		b.log.Warn("audit events dropped during runtime", zap.Int64("dropped", n))
 	}
 }
