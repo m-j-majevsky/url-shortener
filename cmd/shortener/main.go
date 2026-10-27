@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -264,7 +265,18 @@ func makeServiceAndRouter(svcConfig service.ShortenerConfig, cfg config.Applicat
 		return nil, nil, err
 	}
 
-	rt, err := handler.NewRouter(handler.NewRouterParams(cfg, svc, auditor))
+	// Собираем зависимости роутера.
+	us, ok := svcConfig.Storage.(handler.UserStorage)
+	if !ok {
+		return nil, nil, fmt.Errorf("хранилище не поддерживает интерфейс middleware.UserStorage")
+	}
+	var pinger handler.StoragePinger
+	if _, ok := svcConfig.Storage.(handler.StoragePinger); ok {
+		// Сервисный Ping делегирует хранилищу, поэтому достаточно одной проверки.
+		pinger = svc
+	}
+
+	rt, err := handler.NewRouter(handler.NewRouterParams(cfg, svc, us, pinger, auditor))
 	if err != nil {
 		return nil, nil, err
 	}

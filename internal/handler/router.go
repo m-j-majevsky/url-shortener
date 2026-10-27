@@ -51,9 +51,6 @@ type URLShortener interface {
 	MarkUserURLsDeleted(ctx context.Context, batch model.TokensToMarkDeleted, userID string) error
 }
 
-type ServiceConfigReader interface {
-	GetConfig() service.ShortenerConfig
-}
 
 type StoragePinger interface {
 	Ping(ctx context.Context) error
@@ -84,18 +81,22 @@ func NewUserCookieParams(cfg config.ApplicationConfig) UserCookieParams {
 }
 
 type RouterParams struct {
-	Service    URLShortener
-	BaseURL    string
-	UserCookie UserCookieParams
-	Auditor    audit.Notifier // nil (значение по умолчанию) означает, что аудит отключён.
+	Service     URLShortener
+	UserStorage UserStorage    // для CookieMiddleware: регистрация/проверка пользователя
+	Pinger      StoragePinger  // необязательный; nil — /ping не обслуживается
+	BaseURL     string
+	UserCookie  UserCookieParams
+	Auditor     audit.Notifier // nil (значение по умолчанию) означает, что аудит отключён.
 }
 
-func NewRouterParams(cfg config.ApplicationConfig, svc URLShortener, auditor audit.Notifier) RouterParams {
+func NewRouterParams(cfg config.ApplicationConfig, svc URLShortener, us UserStorage, pinger StoragePinger, auditor audit.Notifier) RouterParams {
 	return RouterParams{
-		Service:    svc,
-		BaseURL:    cfg.TargetBaseURL,
-		UserCookie: NewUserCookieParams(cfg),
-		Auditor:    auditor,
+		Service:     svc,
+		UserStorage: us,
+		Pinger:      pinger,
+		BaseURL:     cfg.TargetBaseURL,
+		UserCookie:  NewUserCookieParams(cfg),
+		Auditor:     auditor,
 	}
 }
 
@@ -133,10 +134,7 @@ func NewRouter(params RouterParams) (*Router, error) {
 	cr.Use(logger.WithLogging)
 	cr.Use(GzipMiddleware)
 
-	us, err := getUserStorage(params.Service)
-	if err != nil {
-		return nil, err
-	}
+	us := params.UserStorage
 
 	uih, ok := params.Service.(UndeletedItemsHandler)
 	if !ok {
@@ -147,7 +145,7 @@ func NewRouter(params RouterParams) (*Router, error) {
 	mux := &Router{
 		mux:       cr,
 		service:   params.Service,
-		pinger:    getStoragePinger(params.Service),
+		pinger:    params.Pinger,
 		baseURL:   params.BaseURL,
 		userIDKey: params.UserCookie.userIDKey,
 		uiHandler: uih,
@@ -196,45 +194,8 @@ func NewRouter(params RouterParams) (*Router, error) {
 	return mux, nil
 }
 
-func getServiceConfig(svc URLShortener) (service.ShortenerConfig, error) {
-	scr, ok := svc.(ServiceConfigReader)
-	if !ok {
-		return service.ShortenerConfig{}, fmt.Errorf("невозможно получить ServiceConfigReader")
-	}
-	return scr.GetConfig(), nil
-}
 
-func getUserStorage(svc URLShortener) (UserStorage, error) {
-	cfg, err := getServiceConfig(svc)
-	if err != nil {
-		return nil, err
-	}
 
-	us, ok := cfg.Storage.(UserStorage)
-	if !ok {
-		return nil, fmt.Errorf("хранилище не поддерживает интерфейс middleware.UserStorage")
-	}
-
-	return us, nil
-}
-
-func getStoragePinger(svc URLShortener) StoragePinger {
-	cfg, err := getServiceConfig(svc)
-	if err != nil {
-		return nil
-	}
-
-	if _, ok := cfg.Storage.(StoragePinger); !ok {
-		return nil
-	}
-
-	sp, ok := svc.(StoragePinger)
-	if !ok {
-		return nil
-	}
-
-	return sp
-}
 
 func (rt *Router) getUserIDFromContext(ctx context.Context) (val string, err error) {
 	val, found := ctx.Value(rt.userIDKey).(string)

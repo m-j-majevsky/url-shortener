@@ -189,8 +189,7 @@ func (s *Shortener) GenerateAndStore(ctx context.Context, longURL, userID string
 		if errors.As(err, &eoue) {
 			// longURL уже был в хранилище.
 			// Возвращаем относящийся к нему сохраненный ранее токен
-			// и сервисную ошибку для обработки в раутере:
-			// наружу протекают только ошибки сервиса, типы хранилища не выходят
+			// и признак ошибки для обработки в раутере
 			return eoue.StoredToken, NewErrOriginalURLExists(eoue.StoredToken, eoue.URL)
 		}
 
@@ -209,8 +208,8 @@ func (s *Shortener) GenerateAndStore(ctx context.Context, longURL, userID string
 func (s *Shortener) Resolve(ctx context.Context, token string) (string, error) {
 	url, err := s.config.Storage.Resolve(ctx, token)
 	if err != nil {
-		// Ожидаемые ошибки хранилища транслируем в сервисные типы:
-		// наружу протекают только ошибки сервиса, типы хранилища не выходят
+		// Транслируем ошибки хранилища в ошибки сервиса:
+		// наружу протекают только типы сервиса (service.Err*).
 		var etnf *repository.ErrTokenNotFound
 		if errors.As(err, &etnf) {
 			return "", NewErrTokenNotFound(etnf.Token)
@@ -230,10 +229,6 @@ func (s *Shortener) Ping(ctx context.Context) error {
 		return fmt.Errorf("хранилище не поддерживает метод Ping")
 	}
 	return swp.Ping(ctx)
-}
-
-func (s *Shortener) GetConfig() ShortenerConfig {
-	return s.config
 }
 
 func (s *Shortener) BatchStore(ctx context.Context, req model.BatchShortenReq, userID string) (model.BatchShortenRes, error) {
