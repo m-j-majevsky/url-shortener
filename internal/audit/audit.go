@@ -92,6 +92,12 @@ func NewBroadcaster(observers ...Observer) *Broadcaster {
 	}
 
 	for _, obs := range observers {
+		// nil-наблюдатель пропускаем: воркер для него не запускается, иначе он
+		// упал бы паникой при первой же отправке (симметрично проверке в Notify).
+		if obs == nil {
+			continue
+		}
+
 		pipe := observerPipe{observer: obs, queue: make(chan AuditEvent, observerQueueCap)}
 		b.pipes = append(b.pipes, pipe)
 
@@ -108,34 +114,40 @@ func NewBroadcaster(observers ...Observer) *Broadcaster {
 		}(pipe)
 	}
 
-	// Диспетчер: читает входной канал и раскладывает события по очередям
-	// наблюдателей. Когда входной канал закрыт и опустошён, закрывает
-	// личные очереди наблюдателей и завершается.
-	b.wg.Add(1)
-	go func() {
-		defer b.wg.Done()
-		defer func() {
-			for _, p := range b.pipes {
-				close(p.queue)
-			}
-		}()
+	// Диспетчер нужен только при наличии наблюдателей: без них Notify — no-op,
+	// читать входной канал некому.
+	if len(b.pipes) > 0 {
+		b.wg.Add(1)
+		go b.dispatch()
+	}
 
-		for event := range b.events {
-			for _, p := range b.pipes {
-				select {
-				case p.queue <- event:
-				default:
-					// Очередь конкретного наблюдателя переполнена: событие для него
-					// отбрасываем, чтобы медленный приёмник не задерживал диспетчер
-					// и доставку остальным приёмникам.
-					logger.Log.Error("audit observer queue overflow, event dropped",
-						zap.String("sink", fmt.Sprintf("%T", p.observer)))
-				}
-			}
+	return b
+}
+
+// dispatch читает входной канал и раскладывает события по очередям наблюдателей.
+// Когда входной канал закрыт и опустошён, закрывает личные очереди наблюдателей
+// и завершается.
+func (b *Broadcaster) dispatch() {
+	defer b.wg.Done()
+	defer func() {
+		for _, p := range b.pipes {
+			close(p.queue)
 		}
 	}()
 
-	return b
+	for event := range b.events {
+		for _, p := range b.pipes {
+			select {
+			case p.queue <- event:
+			default:
+				// Очередь конкретного наблюдателя переполнена: событие для него
+				// отбрасываем, чтобы медленный приёмник не задерживал диспетчер
+				// и доставку остальным приёмникам.
+				logger.Log.Error("audit observer queue overflow, event dropped",
+					zap.String("sink", fmt.Sprintf("%T", p.observer)))
+			}
+		}
+	}
 }
 
 // Notify асинхронно отправляет событие во все зарегистрированные приёмники.
@@ -157,7 +169,7 @@ func (b *Broadcaster) Notify(event AuditEvent) {
 	case b.events <- event:
 	default:
 		logger.Log.Error("audit event queue overflow, event dropped",
-			zap.String("audit event", fmt.Sprintf("%v", event)))
+			zap.Any("event", event))
 	}
 }
 

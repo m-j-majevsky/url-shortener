@@ -25,6 +25,12 @@ import (
 	"go.uber.org/zap"
 )
 
+// auditCloseTimeout — дедлайн ожидания доставки событий аудита при завершении
+// работы сервиса. Согласован по порядку величины с ShutdownTimeout: за это время
+// воркеры успевают доотправить нормальный объём накопившихся событий, но
+// недоступный удалённый приёмник не способен затянуть остановку на минуты.
+const auditCloseTimeout = 10 * time.Second
+
 func main() {
 	cfg, err := config.LoadApplicationConfig()
 	if err != nil {
@@ -141,10 +147,26 @@ func main() {
 	// Дожидаемся окончания обработки данных в канале, их сохранения или логирования ошибки
 	backgroundWg.Wait()
 
-	// Дожидаемся доставки всех отправленных событий аудита и закрываем приёмники
-	// (файловый приёмник держит открытый файл, его нужно закрыть)
-	auditor.Close()
-	closeAuditSinks(auditObservers)
+	// Дожидаемся доставки всех отправленных событий аудита с дедлайном, затем
+	// закрываем приёмники (файловый приёмник держит открытый файл, его нужно закрыть).
+	// Без дедлайна недоступный удалённый приёмник способен затянуть остановку
+	// сервиса на очередь накопившихся событий, умноженную на таймаут одной отправки.
+	auditDone := make(chan struct{})
+	go func() {
+		auditor.Close()
+		close(auditDone)
+	}()
+
+	select {
+	case <-auditDone:
+		closeAuditSinks(auditObservers)
+	case <-time.After(auditCloseTimeout):
+		// Дедлайн истёк: приёмники сознательно не закрываем — воркеры аудита ещё
+		// могут отправлять события, и закрытие файла посреди записи дало бы ошибки.
+		// Оставшаяся горутина завершится вместе с процессом.
+		logger.Log.Error("audit delivery wait timed out, audit sinks left unclosed",
+			zap.Duration("timeout", auditCloseTimeout), event)
+	}
 
 	logger.Log.Info("Application shutting down gracefully", zap.String("event", "shutdown complete"))
 }
