@@ -189,8 +189,9 @@ func (s *Shortener) GenerateAndStore(ctx context.Context, longURL, userID string
 		if errors.As(err, &eoue) {
 			// longURL уже был в хранилище.
 			// Возвращаем относящийся к нему сохраненный ранее токен
-			// и признак ошибки для обработки в раутере
-			return eoue.StoredToken, eoue
+			// и сервисную ошибку для обработки в раутере:
+			// наружу протекают только ошибки сервиса, типы хранилища не выходят
+			return eoue.StoredToken, NewErrOriginalURLExists(eoue.StoredToken, eoue.URL)
 		}
 
 		var ett *repository.ErrTokenTaken
@@ -208,6 +209,16 @@ func (s *Shortener) GenerateAndStore(ctx context.Context, longURL, userID string
 func (s *Shortener) Resolve(ctx context.Context, token string) (string, error) {
 	url, err := s.config.Storage.Resolve(ctx, token)
 	if err != nil {
+		// Ожидаемые ошибки хранилища транслируем в сервисные типы:
+		// наружу протекают только ошибки сервиса, типы хранилища не выходят
+		var etnf *repository.ErrTokenNotFound
+		if errors.As(err, &etnf) {
+			return "", NewErrTokenNotFound(etnf.Token)
+		}
+		var erid *repository.ErrTokenIsDeleted
+		if errors.As(err, &erid) {
+			return "", NewErrTokenIsDeleted(erid.Token)
+		}
 		return "", fmt.Errorf("ошибка хранилища: %w", err)
 	}
 	return url, nil

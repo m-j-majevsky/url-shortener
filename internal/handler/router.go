@@ -20,7 +20,6 @@ import (
 	enc "github.com/m-j-majevsky/url-shortener/internal/encoding"
 	"github.com/m-j-majevsky/url-shortener/internal/logger"
 	"github.com/m-j-majevsky/url-shortener/internal/model"
-	"github.com/m-j-majevsky/url-shortener/internal/repository"
 	"github.com/m-j-majevsky/url-shortener/internal/service"
 )
 
@@ -308,14 +307,14 @@ func (rt *Router) resolveShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var etnf *repository.ErrTokenNotFound
+	var etnf *service.ErrTokenNotFound
 	if errors.As(err, &etnf) {
 		logger.Log.Debug(fmt.Sprintf("token %s not found", token), zap.Error(etnf))
 		http.Error(w, "URL не зарегистрирован", http.StatusBadRequest)
 		return
 	}
 
-	var erid *repository.ErrTokenIsDeleted
+	var erid *service.ErrTokenIsDeleted
 	if errors.As(err, &erid) {
 		logger.Log.Debug(fmt.Sprintf("token %s is deleted", token), zap.Error(erid))
 		http.Error(w, fmt.Sprintf("Токен %s удален", erid.Token), http.StatusGone)
@@ -359,7 +358,7 @@ func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) 
 	resCode := http.StatusCreated
 	token, shortenerErr := rt.service.GenerateAndStore(ctx, body, userID)
 	if shortenerErr != nil {
-		var eoue *repository.ErrOriginalURLExists
+		var eoue *service.ErrOriginalURLExists
 		if errors.As(shortenerErr, &eoue) {
 			// В этом случае данные для пользователя есть,
 			// но необходимо сменить статус ответа!
@@ -419,7 +418,7 @@ func (rt *Router) shortenLongURLForJSON(w http.ResponseWriter, r *http.Request) 
 	resCode := http.StatusCreated
 	token, shortenerErr := rt.service.GenerateAndStore(ctx, req.URL, userID)
 	if shortenerErr != nil {
-		var eoue *repository.ErrOriginalURLExists
+		var eoue *service.ErrOriginalURLExists
 		if errors.As(shortenerErr, &eoue) {
 			// В этом случае данные для пользователя есть,
 			// но необходимо сменить статус ответа!
