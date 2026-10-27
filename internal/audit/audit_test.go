@@ -351,8 +351,8 @@ func TestAuditEvent_JSONTags(t *testing.T) {
 
 	// ts — числовой тип (unix-время в секундах), а не строка.
 	var typed struct {
-		Ts int64 `json:"ts"`
+		TS int64 `json:"ts"`
 	}
 	require.NoError(t, json.Unmarshal(data, &typed))
-	assert.Equal(t, int64(12345678), typed.Ts)
+	assert.Equal(t, int64(12345678), typed.TS)
 }
