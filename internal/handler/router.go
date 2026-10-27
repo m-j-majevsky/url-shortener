@@ -243,7 +243,7 @@ func (rt *Router) notifyAudit(action, userID, url string) {
 		return
 	}
 	rt.auditor.Notify(audit.AuditEvent{
-		Ts:     time.Now().Unix(),
+		TS:     time.Now().Unix(),
 		Action: action,
 		UserID: userID,
 		URL:    url,

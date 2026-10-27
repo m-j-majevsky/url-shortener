@@ -69,7 +69,7 @@ func (o *chanObserver) drain() []AuditEvent {
 // testEvent — фабрика событий для тестов.
 func testEvent(n int) AuditEvent {
 	return AuditEvent{
-		Ts:     1700000000 + int64(n),
+		TS:     1700000000 + int64(n),
 		Action: ActionShorten,
 		UserID: fmt.Sprintf("user-%d", n),
 		URL:    fmt.Sprintf("https://example.com/%d", n),
@@ -328,7 +328,7 @@ func (s *BroadcasterSuite) TestCloseDrainsPendingEvents() {
 // TestAuditEvent_JSONTags проверяет соответствие формата события аудита
 // требованиям: имена полей ts, action, user_id, url; ts — unix-время в секундах.
 func TestAuditEvent_JSONTags(t *testing.T) {
-	event := AuditEvent{Ts: 12345678, Action: ActionShorten, UserID: "12315134", URL: "https://example.com/path"}
+	event := AuditEvent{TS: 12345678, Action: ActionShorten, UserID: "12315134", URL: "https://example.com/path"}
 
 	data, err := json.Marshal(event)
 	require.NoError(t, err)

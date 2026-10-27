@@ -35,14 +35,14 @@ func TestNewFileSink(t *testing.T) {
 		// Первый приёмник создаёт файл и пишет одно событие.
 		sink1, err := NewFileSink(path)
 		require.NoError(t, err)
-		require.NoError(t, sink1.Send(AuditEvent{Ts: 1, Action: ActionShorten}))
+		require.NoError(t, sink1.Send(AuditEvent{TS: 1, Action: ActionShorten}))
 		require.NoError(t, sink1.Close())
 
 		// Второй приёмник открывает тот же файл: дозапись, а не перезапись.
 		sink2, err := NewFileSink(path)
 		require.NoError(t, err)
 		defer sink2.Close()
-		require.NoError(t, sink2.Send(AuditEvent{Ts: 2, Action: ActionFollow}))
+		require.NoError(t, sink2.Send(AuditEvent{TS: 2, Action: ActionFollow}))
 
 		data, err := os.ReadFile(path)
 		require.NoError(t, err)
@@ -53,8 +53,8 @@ func TestNewFileSink(t *testing.T) {
 		var first, second AuditEvent
 		require.NoError(t, json.Unmarshal([]byte(lines[0]), &first))
 		require.NoError(t, json.Unmarshal([]byte(lines[1]), &second))
-		assert.Equal(t, int64(1), first.Ts)
-		assert.Equal(t, int64(2), second.Ts)
+		assert.Equal(t, int64(1), first.TS)
+		assert.Equal(t, int64(2), second.TS)
 	})
 
 	t.Run("nonexistent directory returns error", func(t *testing.T) {
@@ -81,15 +81,15 @@ func TestFileSink_Send_WritesOneLine(t *testing.T) {
 	tests := []struct {
 		name     string
 		events   []AuditEvent
-		wantTs   []int64
+		wantTS   []int64
 		wantAct  []string
 		wantUser []string
 		wantURL  []string
 	}{
 		{
 			name:     "single event",
-			events:   []AuditEvent{{Ts: 12345678, Action: ActionShorten, UserID: "12315134", URL: "https://mylongdomain.com/my/long/path/to/shorten/"}},
-			wantTs:   []int64{12345678},
+			events:   []AuditEvent{{TS: 12345678, Action: ActionShorten, UserID: "12315134", URL: "https://mylongdomain.com/my/long/path/to/shorten/"}},
+			wantTS:   []int64{12345678},
 			wantAct:  []string{ActionShorten},
 			wantUser: []string{"12315134"},
 			wantURL:  []string{"https://mylongdomain.com/my/long/path/to/shorten/"},
@@ -97,19 +97,19 @@ func TestFileSink_Send_WritesOneLine(t *testing.T) {
 		{
 			name: "several events in row",
 			events: []AuditEvent{
-				{Ts: 1, Action: ActionShorten, UserID: "u1", URL: "https://example.com/a"},
-				{Ts: 2, Action: ActionFollow, UserID: "u2", URL: "https://example.com/b"},
-				{Ts: 3, Action: ActionShorten, UserID: "", URL: "https://example.com/c"},
+				{TS: 1, Action: ActionShorten, UserID: "u1", URL: "https://example.com/a"},
+				{TS: 2, Action: ActionFollow, UserID: "u2", URL: "https://example.com/b"},
+				{TS: 3, Action: ActionShorten, UserID: "", URL: "https://example.com/c"},
 			},
-			wantTs:   []int64{1, 2, 3},
+			wantTS:   []int64{1, 2, 3},
 			wantAct:  []string{ActionShorten, ActionFollow, ActionShorten},
 			wantUser: []string{"u1", "u2", ""},
 			wantURL:  []string{"https://example.com/a", "https://example.com/b", "https://example.com/c"},
 		},
 		{
 			name:     "non-ascii url",
-			events:   []AuditEvent{{Ts: 42, Action: ActionFollow, UserID: "u", URL: "https://example.com/привет"}},
-			wantTs:   []int64{42},
+			events:   []AuditEvent{{TS: 42, Action: ActionFollow, UserID: "u", URL: "https://example.com/привет"}},
+			wantTS:   []int64{42},
 			wantAct:  []string{ActionFollow},
 			wantUser: []string{"u"},
 			wantURL:  []string{"https://example.com/привет"},
@@ -145,7 +145,7 @@ func TestFileSink_Send_WritesOneLine(t *testing.T) {
 				var got AuditEvent
 				require.NoError(t, json.Unmarshal([]byte(line), &got),
 					"строка %d должна быть валидным JSON", i)
-				assert.Equal(t, tt.wantTs[i], got.Ts)
+				assert.Equal(t, tt.wantTS[i], got.TS)
 				assert.Equal(t, tt.wantAct[i], got.Action)
 				assert.Equal(t, tt.wantUser[i], got.UserID)
 				assert.Equal(t, tt.wantURL[i], got.URL)
@@ -171,7 +171,7 @@ func TestFileSink_Send_Concurrent(t *testing.T) {
 		go func(n int) {
 			defer wg.Done()
 			event := AuditEvent{
-				Ts:     int64(n),
+				TS:     int64(n),
 				Action: ActionShorten,
 				UserID: fmt.Sprintf("user-%d", n),
 				URL:    fmt.Sprintf("https://example.com/%d", n),
@@ -200,7 +200,7 @@ func TestFileSink_Send_Concurrent(t *testing.T) {
 
 	for i := 0; i < goroutines; i++ {
 		want := AuditEvent{
-			Ts:     int64(i),
+			TS:     int64(i),
 			Action: ActionShorten,
 			UserID: fmt.Sprintf("user-%d", i),
 			URL:    fmt.Sprintf("https://example.com/%d", i),
@@ -214,7 +214,7 @@ func TestFileSink_Send_Concurrent(t *testing.T) {
 // с правильным Content-Type и телом, а коды ответа сервера интерпретируются
 // корректно: 2xx — успех, начиная с 4xx — ошибка. Таблица — по статусам.
 func TestHTTPSink_Send(t *testing.T) {
-	event := AuditEvent{Ts: 12345678, Action: ActionShorten, UserID: "12315134", URL: "https://example.com/path"}
+	event := AuditEvent{TS: 12345678, Action: ActionShorten, UserID: "12315134", URL: "https://example.com/path"}
 
 	tests := []struct {
 		name       string
@@ -274,7 +274,7 @@ func TestHTTPSink_Send_NetworkError(t *testing.T) {
 	server.Close()
 
 	sink := NewHTTPSink(server.URL)
-	err := sink.Send(AuditEvent{Ts: 1, Action: ActionShorten})
+	err := sink.Send(AuditEvent{TS: 1, Action: ActionShorten})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot send audit event")
@@ -294,7 +294,7 @@ func TestHTTPSink_Send_Timeout(t *testing.T) {
 	sink := NewHTTPSink(server.URL)
 
 	start := time.Now()
-	err := sink.Send(AuditEvent{Ts: 1, Action: ActionShorten})
+	err := sink.Send(AuditEvent{TS: 1, Action: ActionShorten})
 	elapsed := time.Since(start)
 
 	require.Error(t, err, "зависший приёмник должен привести к ошибке таймаута")
