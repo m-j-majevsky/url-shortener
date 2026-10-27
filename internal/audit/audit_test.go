@@ -216,6 +216,12 @@ func (s *BroadcasterSuite) TestQueueOverflowDropsEvent() {
 		"доставлено не больше, чем вмещают очередь и воркер")
 	s.Assert().GreaterOrEqual(delivered, observerQueueCap-1,
 		"существенная часть событий должна быть доставлена")
+
+	// Счётчик потерь согласован с фактом: аудит — best-effort, и каждое
+	// недоставленное событие должно быть учтено (потери здесь возможны только
+	// в диспетчере — входной буфер вмещает все 200 отправленных событий).
+	s.Assert().Equal(int64(total-delivered), b.Dropped(),
+		"Dropped должен учитывать каждое недоставленное событие")
 }
 
 // TestBroadcaster_NotifyAfterClose проверяет, что Notify после Close —
@@ -234,6 +240,10 @@ func (s *BroadcasterSuite) TestNotifyAfterClose() {
 	// что наблюдатель ничего не получил.
 	time.Sleep(100 * time.Millisecond)
 	s.Assert().Empty(observer.drain(), "после Close новые события не доставляются")
+
+	// Отброшенное после Close событие не теряется «молча»: оно учтено счётчиком.
+	s.Assert().Equal(int64(1), b.Dropped(),
+		"событие, отброшенное после Close, должно учитываться в Dropped")
 }
 
 // TestBroadcaster_CloseTwiceAndWaitConcurrently проверяет идемпотентность
@@ -281,24 +291,20 @@ func (s *BroadcasterSuite) TestEmptyObservers() {
 		"Close на пустом субъекте должен завершаться мгновенно")
 }
 
-// TestBroadcaster_CloseDrainsPendingEvents проверяет ключевую гарантию
-// graceful shutdown: события, дошедшие до конвейера рассылки, доставляются
-// наблюдателю полностью — входной буфер канала и личная очередь дочитываются
-// после закрытия.
-//
-// Событий отправляется ровно observerQueueCap: при таком объёме личная очередь
-// наблюдателя не переполняется ни при каком планировании горутин (в ней не
-// бывает больше cap-1 событий, пока очередное удерживает диспетчер), поэтому
-// политика отбрасывания при переполнении не задействуется и проверка
-// детерминированна. Поведение при переполнении проверяет отдельный тест
-// TestQueueOverflowDropsEvent.
+// TestBroadcaster_CloseDrainsPendingEvents проверяет доставку событий,
+// отправленных до Close: диспетчер дораздаёт их из закрывающегося входного
+// канала, воркеры доотправляют. Гарантия доставки ограничена ёмкостью
+// конвейера, поэтому объём ровно observerQueueCap: при нём переполнение
+// личной очереди невозможно при любом планировании — в очереди не бывает
+// больше observerQueueCap-1 событий, пока очередное удерживает диспетчер,
+// значит проверка детерминирована. Потеря при переполнении — отдельный тест
+// (см. TestQueueOverflowDropsEvent).
 func (s *BroadcasterSuite) TestCloseDrainsPendingEvents() {
-	observer := newFastObserver(observerQueueCap + 128)
+	observer := newFastObserver(observerQueueCap)
 
 	b := NewBroadcaster(observer)
 
-	const total = observerQueueCap
-	for i := 0; i < total; i++ {
+	for i := 0; i < observerQueueCap; i++ {
 		b.Notify(testEvent(i))
 	}
 
@@ -306,13 +312,17 @@ func (s *BroadcasterSuite) TestCloseDrainsPendingEvents() {
 	b.Close()
 
 	delivered := observer.drain()
-	s.Require().Len(delivered, total, "все события, отправленные до Close, должны быть доставлены")
+	s.Require().Len(delivered, observerQueueCap,
+		"все события, отправленные до Close, должны быть доставлены")
 
-	// Поля и порядок событий не искажаются при доставке: диспетчер и воркер
-	// обрабатывают конвейер в порядке FIFO.
+	// Поля событий не искажаются, порядок сохраняется (FIFO через конвейер).
 	for i, got := range delivered {
 		s.Assert().Equal(testEvent(i), got)
 	}
+
+	// При таком объёме потерь быть не должно: переполнение исключено по
+	// построению, счётчик это подтверждает.
+	s.Assert().Zero(b.Dropped(), "при observerQueueCap событиях переполнение невозможно")
 }
 
 // TestAuditEvent_JSONTags проверяет соответствие формата события аудита

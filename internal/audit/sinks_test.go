@@ -187,12 +187,12 @@ func TestFileSink_Send_Concurrent(t *testing.T) {
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
 	require.Len(t, lines, goroutines, "все события должны быть записаны построчно без склейки")
 
-	// События собираются в карту: при конкурентной записи порядок строк не
-	// гарантирован, поэтому сверяем содержимое как множество с кратностями.
+	// Порядок строк при конкурентной записи не гарантирован, поэтому сверяем
+	// события как множество с кратностями: каждое отправленное должно быть
+	// записано ровно один раз и без искажений полей.
 	got := make(map[AuditEvent]int, goroutines)
 	for _, line := range lines {
 		var ev AuditEvent
-		// каждая строка — целостный JSON-объект, без склеек и обрывов
 		require.NoError(t, json.Unmarshal([]byte(line), &ev),
 			"каждая строка должна быть целым JSON-объектом: %q", line)
 		got[ev]++
