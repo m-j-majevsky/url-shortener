@@ -105,7 +105,7 @@ func (s *RouterTestSuite) TestWebhook() {
 	if err != nil {
 		s.T().Fatalf("Ошибка создания тестового сервиса: %v", err)
 	}
-	rt, err := handler.NewRouter(handler.NewRouterParams(cfg, svc))
+	rt, err := handler.NewRouter(handler.NewRouterParams(cfg, svc, nil))
 	if err != nil {
 		s.T().Fatalf("Ошибка настройки тестового маршрутизатора запросов: %v", err)
 	}
@@ -263,7 +263,7 @@ func (s *RouterTestSuite) TestWebhook_shortenLongURLForJSON() {
 	if err != nil {
 		s.T().Fatalf("Ошибка создания тестового сервиса: %v", err)
 	}
-	rt, err := handler.NewRouter(handler.NewRouterParams(cfg, svc))
+	rt, err := handler.NewRouter(handler.NewRouterParams(cfg, svc, nil))
 	if err != nil {
 		s.T().Fatalf("Ошибка настройки тестового маршрутизатора запросов: %v", err)
 	}
@@ -383,7 +383,7 @@ func (s *RouterTestSuite) TestWebhook_shortenBatch_Success() {
 	connMock.ExpectQuery(`INSERT INTO users DEFAULT VALUES RETURNING id`).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(userUIID))
 
-	rt, err := handler.NewRouter(handler.NewRouterParams(MakeTestApplicationConfig(), svc))
+	rt, err := handler.NewRouter(handler.NewRouterParams(MakeTestApplicationConfig(), svc, nil))
 	if err != nil {
 		s.T().Fatalf("Ошибка настройки тестового маршрутизатора запросов: %v", err)
 	}
@@ -462,7 +462,7 @@ func (s *RouterTestSuite) TestWebhook_shortenBatch_Success_With_Conflict_On_URL(
 	connMock.ExpectQuery(`INSERT INTO users DEFAULT VALUES RETURNING id`).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(userUIID))
 
-	rt, err := handler.NewRouter(handler.NewRouterParams(MakeTestApplicationConfig(), svc))
+	rt, err := handler.NewRouter(handler.NewRouterParams(MakeTestApplicationConfig(), svc, nil))
 	if err != nil {
 		s.T().Fatalf("Ошибка настройки тестового маршрутизатора запросов: %v", err)
 	}
@@ -508,7 +508,7 @@ func (s *RouterTestSuite) TestGzipCompression() {
 	svc.On("GetConfig").Return(cfg.ServiceConfig)
 	svc.On("GenerateAndStore", mock.Anything, yandexLongURL, mock.Anything).Return(yandexToken, nil)
 
-	rt, err := handler.NewRouter(handler.NewRouterParams(cfg, svc))
+	rt, err := handler.NewRouter(handler.NewRouterParams(cfg, svc, nil))
 	if err != nil {
 		s.T().Fatalf("Ошибка настройки тестового маршрутизатора запросов: %v", err)
 	}
@@ -582,7 +582,7 @@ func (s *RouterTestSuite) TestWebhook_Get_Ping() {
 	svc := new(service.MockShortener)
 	svc.On("GetConfig").Return(cfg.ServiceConfig)
 
-	rt, err := handler.NewRouter(handler.NewRouterParams(cfg, svc))
+	rt, err := handler.NewRouter(handler.NewRouterParams(cfg, svc, nil))
 	if err != nil {
 		s.T().Fatalf("Ошибка настройки тестового маршрутизатора запросов: %v", err)
 	}
@@ -629,7 +629,7 @@ func (s *RouterTestSuite) TestWebhook_getUserURLs() {
 	svc := new(service.MockShortener)
 	svc.On("GetConfig").Return(cfg.ServiceConfig)
 
-	rt, err := handler.NewRouter(handler.NewRouterParams(cfg, svc))
+	rt, err := handler.NewRouter(handler.NewRouterParams(cfg, svc, nil))
 	if err != nil {
 		s.T().Fatalf("Ошибка настройки тестового маршрутизатора запросов: %v", err)
 	}
@@ -707,7 +707,7 @@ func (s *RouterTestSuite) TestWebhook_markUserURLsDeleted() {
 	connMock.ExpectQuery(`INSERT INTO users DEFAULT VALUES RETURNING id`).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(userUIID))
 
-	rt, err := handler.NewRouter(handler.NewRouterParams(MakeTestApplicationConfig(), svc))
+	rt, err := handler.NewRouter(handler.NewRouterParams(MakeTestApplicationConfig(), svc, nil))
 	if err != nil {
 		s.T().Fatalf("Ошибка настройки тестового маршрутизатора запросов: %v", err)
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
+	"github.com/m-j-majevsky/url-shortener/internal/audit"
 	"github.com/m-j-majevsky/url-shortener/internal/config"
 	enc "github.com/m-j-majevsky/url-shortener/internal/encoding"
 	"github.com/m-j-majevsky/url-shortener/internal/logger"
@@ -75,13 +76,15 @@ type RouterParams struct {
 	Service    URLShortener
 	BaseURL    string
 	UserCookie UserCookieParams
+	Auditor    audit.Notifier // nil (значение по умолчанию) означает, что аудит отключён.
 }
 
-func NewRouterParams(cfg config.ApplicationConfig, svc URLShortener) RouterParams {
+func NewRouterParams(cfg config.ApplicationConfig, svc URLShortener, auditor audit.Notifier) RouterParams {
 	return RouterParams{
 		Service:    svc,
 		BaseURL:    cfg.TargetBaseURL,
 		UserCookie: NewUserCookieParams(cfg),
+		Auditor:    auditor,
 	}
 }
 
@@ -94,6 +97,7 @@ type Router struct {
 	baseURL   string
 	userIDKey contextKey
 	uiHandler UndeletedItemsHandler
+	auditor   audit.Notifier // рассылка событий аудита; nil — аудит отключён
 }
 
 func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -136,6 +140,7 @@ func NewRouter(params RouterParams) (*Router, error) {
 		baseURL:   params.BaseURL,
 		userIDKey: params.UserCookie.userIDKey,
 		uiHandler: uih,
+		auditor:   params.Auditor,
 	}
 
 	// Текстовый API
@@ -228,6 +233,21 @@ func (rt *Router) getUserIDFromContext(ctx context.Context) (val string, err err
 	return
 }
 
+// notifyAudit формирует событие аудита и отправляет его во все доступные
+// приёмники (паттерн «Наблюдатель»). Вызывается хэндлерами после успешной
+// обработки запроса. Если аудит не настроен (auditor == nil), метод ничего не делает.
+func (rt *Router) notifyAudit(action, userID, url string) {
+	if rt.auditor == nil {
+		return
+	}
+	rt.auditor.Notify(audit.AuditEvent{
+		Ts:     time.Now().Unix(),
+		Action: action,
+		UserID: userID,
+		URL:    url,
+	})
+}
+
 // Путь "/ping", GET
 
 func (rt *Router) pingDB(w http.ResponseWriter, r *http.Request) {
@@ -266,6 +286,12 @@ func (rt *Router) resolveShortURL(w http.ResponseWriter, r *http.Request) {
 	url, err := rt.service.Resolve(ctx, token)
 
 	if err == nil {
+		// Аудит: пользователь успешно прошёл по короткой ссылке — отправляем follow-событие.
+		// user_id не заполняется: GET /{token} не проходит через CookieMiddleware,
+		// и надёжно определить пользователя в этом запросе нельзя
+		// (событие предусматривает пустой идентификатор — «если есть»).
+		rt.notifyAudit(audit.ActionFollow, "", url)
+
 		http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 		return
 	}
@@ -334,6 +360,11 @@ func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(resCode)
 	resBody := fmt.Sprintf("%s/%s", rt.baseURL, token)
 	io.WriteString(w, resBody)
+
+	// Аудит: запрос обработан успешно — отправляем shorten-событие с оригинальным URL.
+	// Успешной считается и обработка с ответом 409 Conflict: ссылка зарегистрирована,
+	// клиент получил короткий URL.
+	rt.notifyAudit(audit.ActionShorten, userID, string(bodyBytes))
 }
 
 // Путь "/api/shorten", POST
@@ -392,6 +423,11 @@ func (rt *Router) shortenLongURLForJSON(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+
+	// Аудит: запрос обработан успешно — отправляем shorten-событие с оригинальным URL.
+	// Успешной считается и обработка с ответом 409 Conflict: ссылка зарегистрирована,
+	// клиент получил короткий URL.
+	rt.notifyAudit(audit.ActionShorten, userID, req.URL)
 }
 
 // Путь "/api/shorten/batch", POST

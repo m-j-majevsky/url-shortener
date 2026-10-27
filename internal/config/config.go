@@ -19,6 +19,8 @@ type ApplicationConfig struct {
 	CookieUserIDTTL   time.Duration // время жизни cookie, имя которого хранится в CookieUserIDName
 	SaveStateInterval time.Duration // интервал для таймера на сохранение данных в FileStoragePath
 	ShutdownTimeout   time.Duration // время на graceful shutdown
+	AuditFile         string        // путь к файлу-приёмнику аудита; пусто — аудит в файл отключён
+	AuditURL          string        // URL удалённого приёмника аудита; пусто — аудит на удалённый сервер отключён
 	ServiceConfig     service.ShortenerConfig
 }
 
@@ -57,6 +59,14 @@ func LoadApplicationConfig() (ApplicationConfig, error) {
 		appConfig.CookieUserIDName = envCookieUserIDName
 	}
 
+	if envAuditFile, _ := os.LookupEnv("AUDIT_FILE"); envAuditFile != "" {
+		appConfig.AuditFile = envAuditFile
+	}
+
+	if envAuditURL, _ := os.LookupEnv("AUDIT_URL"); envAuditURL != "" {
+		appConfig.AuditURL = envAuditURL
+	}
+
 	envSigningKeyStr, _ := os.LookupEnv("SIGNING_KEY")
 	if envSigningKey := []byte(envSigningKeyStr); len(envSigningKey) != 0 {
 		appConfig.SigningKey = envSigningKey
@@ -91,5 +101,7 @@ func parseFlags(cfg *ApplicationConfig) {
 	flag.StringVar(&cfg.FileStoragePath, "f", "", "path to storage saved state")
 	flag.StringVar(&cfg.CookieUserIDName, "u", "user_id_jwot", "user ID cookie name")
 	flag.DurationVar(&cfg.SaveStateInterval, "s", time.Second*time.Duration(1), "save state interval")
+	flag.StringVar(&cfg.AuditFile, "audit-file", "", "path to file audit sink; empty value disables file audit")
+	flag.StringVar(&cfg.AuditURL, "audit-url", "", "URL of remote audit sink; empty value disables remote audit")
 	flag.Parse()
 }

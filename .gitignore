@@ -17,7 +17,7 @@ cmd/shortener/main
 cmd/shortener/shortener
 
 # Examples and snippets
-cmd/misc/*
+misc/*
 
 # Some attempts left unused
 internal/trash/*
@@ -33,3 +33,5 @@ vendor/
 batch_req.json
 emergency_dead_letter.log
 storage_state.json
+audit.json
+

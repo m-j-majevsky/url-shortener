@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/m-j-majevsky/url-shortener/internal/audit"
 	"github.com/m-j-majevsky/url-shortener/internal/config"
 	"github.com/m-j-majevsky/url-shortener/internal/handler"
 	"github.com/m-j-majevsky/url-shortener/internal/logger"
@@ -33,6 +35,28 @@ func main() {
 		log.Fatal(err)
 	}
 	defer logger.Log.Sync()
+
+	// Настройка аудита (паттерн «Наблюдатель»).
+	// Приёмники создаются только если соответствующий параметр конфигурации задан;
+	// иначе соответствующий приёмник аудита отключён.
+	var auditObservers []audit.Observer
+
+	if cfg.AuditFile != "" {
+		fileSink, err := audit.NewFileSink(cfg.AuditFile)
+		if err != nil {
+			logger.Log.Fatal(err.Error(), zap.String("event", "opening audit file sink"))
+		}
+		auditObservers = append(auditObservers, fileSink)
+		logger.Log.Info("Audit file sink is on", zap.String("path", cfg.AuditFile))
+	}
+
+	if cfg.AuditURL != "" {
+		auditObservers = append(auditObservers, audit.NewHTTPSink(cfg.AuditURL))
+		logger.Log.Info("Audit remote sink is on", zap.String("url", cfg.AuditURL))
+	}
+
+	// Точка диспетчеризации событий аудита; без наблюдателей Notify является no-op
+	auditor := audit.NewBroadcaster(auditObservers...)
 
 	// Создаём контекст с возможностью отмены по сигналу для корректного завершения
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -74,7 +98,7 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	service, router, err := makeServiceAndRouter(cfg)
+	service, router, err := makeServiceAndRouter(cfg, auditor)
 	if err != nil {
 		logger.Log.Fatal(err.Error(), zap.String("event", "initializing service"))
 	}
@@ -120,6 +144,11 @@ func main() {
 
 	// Дожидаемся окончания обработки данных в канале, их сохранения или логирования ошибки
 	backgroundWg.Wait()
+
+	// Дожидаемся доставки всех отправленных событий аудита и закрываем приёмники
+	// (файловый приёмник держит открытый файл, его нужно закрыть)
+	auditor.Close()
+	closeAuditSinks(auditObservers)
 
 	logger.Log.Info("Application shutting down gracefully", zap.String("event", "shutdown complete"))
 }
@@ -179,18 +208,33 @@ func saveStateDeferred(storage *repository.LocalStorage, path string) {
 	}
 }
 
-func makeServiceAndRouter(cfg config.ApplicationConfig) (*service.Shortener, http.Handler, error) {
+func makeServiceAndRouter(cfg config.ApplicationConfig, auditor audit.Notifier) (*service.Shortener, http.Handler, error) {
 	svc, err := service.NewShortener(cfg.ServiceConfig)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	rt, err := handler.NewRouter(handler.NewRouterParams(cfg, svc))
+	rt, err := handler.NewRouter(handler.NewRouterParams(cfg, svc, auditor))
 	if err != nil {
 		return nil, nil, err
 	}
 
 	return svc, rt, nil
+}
+
+// closeAuditSinks закрывает приёмники аудита, требующие освобождения ресурсов
+// (например, файловый приёмник держит открытый файл).
+// Вызывается после завершения доставки событий.
+func closeAuditSinks(observers []audit.Observer) {
+	for _, obs := range observers {
+		// Интерфейс Observer не обязан быть Closeable — закрываем только тех,
+		// кто поддерживает io.Closer
+		if closer, ok := obs.(io.Closer); ok {
+			if err := closer.Close(); err != nil {
+				logger.Log.Error("audit sink closing failed", zap.Error(err))
+			}
+		}
+	}
 }
 
 // Создаем сервис и запускаем HTTP-сервер
