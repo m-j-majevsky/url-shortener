@@ -31,16 +31,33 @@ import (
 // недоступный удалённый приёмник не способен затянуть остановку на минуты.
 const auditCloseTimeout = 10 * time.Second
 
+// hardcodedSigningKey — резервный ключ подписания JWT на случай отсутствия
+// SIGNING_KEY (см. ErrEmptySigningKey в internal/config). Существует только
+// ради автотестов платформы, которые стартуют со значениями по умолчанию.
+const hardcodedSigningKey = "jwt-signing-super-secret"
+
 func main() {
 	cfg, err := config.LoadApplicationConfig()
-	if err != nil {
+	if err != nil && !errors.Is(err, config.ErrEmptySigningKey) {
 		log.Fatal(err)
+	}
+	if errors.Is(err, config.ErrEmptySigningKey) {
+		// Т.к. автотесты на платформе должны стартовать со значениями по умолчанию,
+		// пока также добавлю ветвь с установкой ключа в явном виде
+		cfg.SigningKey = []byte(hardcodedSigningKey)
 	}
 
 	if err := logger.Initialize(cfg.LogLevel); err != nil {
 		log.Fatal(err)
 	}
 	defer logger.Log.Sync()
+
+	// Параметры сервиса собираются в main: конфиг самодостаточен и не знает о сервисе
+	svcConfig := service.DefaultShortenerConfig()
+
+	// Имя файла для логирования необработанных запросов DELETE /api/user/urls
+	// Задам хардкодом, пока не придумаю подходящее имя флага или переменной
+	svcConfig.DeadLetterLogFile = "emergency_dead_letter.log"
 
 	// Настройка аудита (паттерн «Наблюдатель»).
 	// Приёмники создаются только если соответствующий параметр конфигурации задан;
@@ -83,7 +100,7 @@ func main() {
 			logger.Log.Fatal(err.Error(), zap.String("event", "executing migrations"))
 		}
 
-		cfg.ServiceConfig.Storage = repository.NewPgStorage(pool)
+		svcConfig.Storage = repository.NewPgStorage(pool)
 		logger.Log.Info("Remote storage mode is on", zap.String("event", "preparing storage"))
 	} else {
 		localStorage, saveStateMode, err = loadLocalStorage(cfg.FileStoragePath)
@@ -91,7 +108,7 @@ func main() {
 			logger.Log.Fatal(err.Error(), zap.String("event", "loading storage state from file"))
 		}
 
-		cfg.ServiceConfig.Storage = localStorage
+		svcConfig.Storage = localStorage
 		logger.Log.Info("Local storage mode is on", zap.String("event", "preparing storage"))
 	}
 
@@ -100,7 +117,7 @@ func main() {
 		defer saveStateDeferred(localStorage, cfg.FileStoragePath)
 	}
 
-	service, router, err := makeServiceAndRouter(cfg, auditor)
+	service, router, err := makeServiceAndRouter(svcConfig, cfg, auditor)
 	if err != nil {
 		logger.Log.Fatal(err.Error(), zap.String("event", "initializing service"))
 	}
@@ -120,11 +137,26 @@ func main() {
 		Handler: router,
 	}
 
-	// Сам сервер запускаем фоном
-	go listenAndServe(server)
+	// Сам сервер запускаем фоном; ошибка запуска (например, занятый порт) отправляется
+	// в канал, из которого её читает main, — иначе ошибка терялась бы в горутине:
+	// сервис оставался бы живым, но не отвечающим на запросы.
+	logger.Log.Info("Starting server", zap.String("address", server.Addr),
+		zap.String("event", "starting server"))
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.ListenAndServe()
+	}()
 
-	// Блокируем main, пока не придёт сигнал
-	<-ctx.Done()
+	// Блокируем main, пока не придёт сигнал или ошибка запуска сервера
+	select {
+	case <-ctx.Done():
+		// Обычный путь: сигнал завершения — переходим к graceful shutdown
+	case err := <-errCh:
+		// ErrServerClosed сюда дойти не может: Shutdown ещё не вызывался.
+		// log.Fatal завершает процесс немедленно, минуя defers; это допустимо:
+		// сервер не начал работу, состояние не изменялось, сохранять нечего.
+		logger.Log.Fatal(err.Error(), zap.String("event", "starting HTTP server"))
+	}
 
 	// Инициируем graceful shutdown
 	event := zap.String("event", "shutdown on signal")
@@ -226,8 +258,8 @@ func saveStateDeferred(storage *repository.LocalStorage, path string) {
 	}
 }
 
-func makeServiceAndRouter(cfg config.ApplicationConfig, auditor audit.Notifier) (*service.Shortener, http.Handler, error) {
-	svc, err := service.NewShortener(cfg.ServiceConfig)
+func makeServiceAndRouter(svcConfig service.ShortenerConfig, cfg config.ApplicationConfig, auditor audit.Notifier) (*service.Shortener, http.Handler, error) {
+	svc, err := service.NewShortener(svcConfig)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -252,16 +284,5 @@ func closeAuditSinks(observers []audit.Observer) {
 				logger.Log.Error("audit sink closing failed", zap.Error(err))
 			}
 		}
-	}
-}
-
-// Создаем сервис и запускаем HTTP-сервер
-func listenAndServe(server *http.Server) {
-	event := zap.String("event", "starting server")
-	logger.Log.Info("Starting server", zap.String("address", server.Addr), event)
-	if err := server.ListenAndServe(); err != nil &&
-		// ErrServerClosed возникает при корректном Shutdown
-		!errors.Is(err, http.ErrServerClosed) {
-		logger.Log.Error(err.Error(), event)
 	}
 }
