@@ -26,6 +26,7 @@ type compressWriter struct {
 	w           http.ResponseWriter
 	zw          *gzip.Writer
 	wroteHeader bool
+	skipGzip    bool // ответ без тела (204, 304): gzip-поток не применяется
 }
 
 func newCompressWriter(w http.ResponseWriter) *compressWriter {
@@ -53,7 +54,11 @@ func (c *compressWriter) WriteHeader(statusCode int) {
 	}
 	c.wroteHeader = true
 
-	if statusCode < 300 {
+	// Для ответов без тела (204 No Content, 304 Not Modified) gzip не применяется:
+	// закрытие gzip.Writer записало бы в пустой ответ gzip-заголовок и футер.
+	if statusCode == http.StatusNoContent || statusCode == http.StatusNotModified {
+		c.skipGzip = true
+	} else if statusCode < 300 {
 		c.w.Header().Set("Content-Encoding", "gzip")
 	}
 
@@ -62,6 +67,11 @@ func (c *compressWriter) WriteHeader(statusCode int) {
 
 // Close закрывает gzip.Writer и досылает все данные из буфера.
 func (c *compressWriter) Close() error {
+	if c.skipGzip {
+		// Ответ без тела: Close здесь записал бы в w пустой gzip-поток
+		// (заголовок и футер), которого в ответе быть не должно.
+		return nil
+	}
 	return c.zw.Close()
 }
 
@@ -127,7 +137,8 @@ func GzipMiddleware(h http.Handler) http.Handler {
 			// оборачиваем тело запроса в io.Reader с поддержкой декомпрессии
 			cr, err := newCompressReader(r.Body)
 			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
+				// Невалидное gzip-тело — ошибка клиента, а не сервера.
+				http.Error(w, "тело запроса не является корректным gzip-потоком", http.StatusBadRequest)
 				return
 			}
 			// меняем тело запроса на новое

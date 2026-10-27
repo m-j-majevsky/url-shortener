@@ -32,6 +32,16 @@ const (
 	pingPath = "/ping"
 
 	procTimeout = 5 * time.Second
+
+	// Ограничения на размер тел запросов (http.MaxBytesReader).
+	//
+	// GzipMiddleware декомпрессирует тело запроса до передачи управления хендлерам,
+	// поэтому лимит применяется к распакованным данным: защита действует и на
+	// gzip-бомбы — сервер не станет читать больше заданного, сколь бы большими
+	// ни были сжатые исходные данные.
+	maxURLBodyLen       = 2048    // текстовый URL в POST "/": длина URL ограничена 2048 символами
+	maxJSONBodyLen      = 4096    // одиночный JSON в "/api/shorten": запас на JSON-обрамление вокруг URL
+	maxBatchJSONBodyLen = 1 << 20 // массивы в "/api/shorten/batch" и "/api/user/urls": batch-запросы бывают длинными
 )
 
 type URLShortener interface {
@@ -326,6 +336,9 @@ func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Ограничиваем размер тела запроса до чтения.
+	r.Body = http.MaxBytesReader(w, r.Body, maxURLBodyLen)
+
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		logger.Log.Debug("error reading request body", zap.Error(err))
@@ -384,6 +397,9 @@ func (rt *Router) shortenLongURLForJSON(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "ожидается запрос с заголовком Content-Type: application/json", http.StatusBadRequest)
 		return
 	}
+
+	// Ограничиваем размер тела запроса до декодирования.
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyLen)
 
 	var req model.ShortenReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -454,6 +470,9 @@ func (rt *Router) shortenBatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "ожидается запрос с заголовком Content-Type: application/json", http.StatusBadRequest)
 		return
 	}
+
+	// Ограничиваем размер тела запроса до декодирования.
+	r.Body = http.MaxBytesReader(w, r.Body, maxBatchJSONBodyLen)
 
 	var batchReq model.BatchShortenReq
 	if err := json.NewDecoder(r.Body).Decode(&batchReq); err != nil {
@@ -572,6 +591,9 @@ func (rt *Router) markUserURLsDeleted(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "ожидается запрос с заголовком Content-Type: application/json", http.StatusBadRequest)
 		return
 	}
+
+	// Ограничиваем размер тела запроса до декодирования.
+	r.Body = http.MaxBytesReader(w, r.Body, maxBatchJSONBodyLen)
 
 	var batchReq model.TokensToMarkDeleted
 	if err := json.NewDecoder(r.Body).Decode(&batchReq); err != nil {
