@@ -16,11 +16,17 @@ type (
 
 	UserToTokens map[string][]string
 
+	// DeletedTokens — множество токенов, помеченных удалёнными.
+	// Аналог признака is_deleted в PG: URL записи при удалении сохраняется,
+	// повторное сохранение того же URL даёт конфликт со старым токеном.
+	DeletedTokens map[string]bool
+
 	LocalStorage struct {
 		mu sync.Mutex
 
-		data  TokenToURL
-		users UserToTokens
+		data    TokenToURL
+		users   UserToTokens
+		deleted DeletedTokens
 	}
 
 	itemRepr struct {
@@ -28,13 +34,10 @@ type (
 		ShortURL    string `json:"short_url"`
 		OriginalURL string `json:"original_url"`
 		UserID      string `json:"userID"`
+		Deleted     bool   `json:"deleted,omitempty"`
 	}
 
 	storageRepr []itemRepr
-)
-
-const (
-	isDeleted = ""
 )
 
 func newTokenToURL() TokenToURL {
@@ -47,8 +50,9 @@ func newUserToTokens() UserToTokens {
 
 func NewLocalStorage() *LocalStorage {
 	return &LocalStorage{
-		data:  newTokenToURL(),
-		users: newUserToTokens(),
+		data:    newTokenToURL(),
+		users:   newUserToTokens(),
+		deleted: make(DeletedTokens),
 	}
 }
 
@@ -62,6 +66,7 @@ func (s *LocalStorage) exportRepr() storageRepr {
 			ShortURL:    su,
 			OriginalURL: ou,
 			UserID:      uid,
+			Deleted:     s.deleted[su],
 		}
 		idx += 1
 	}
@@ -105,9 +110,19 @@ func (s *LocalStorage) SaveToFile(path string) error {
 
 func (s *LocalStorage) importRepr(repr storageRepr) {
 	s.data = make(TokenToURL, len(repr))
+	// Перезапись состояния сбрасывает признаки удаления (аналог is_deleted)
+	s.deleted = make(DeletedTokens)
 	for _, item := range repr {
+		// Пустой original_url означал признак удаления.
+		if item.OriginalURL == "" {
+			s.deleted[item.ShortURL] = true
+			continue
+		}
 		s.data[item.ShortURL] = item.OriginalURL
 		s.addTokenToUser(item.ShortURL, item.UserID)
+		if item.Deleted {
+			s.deleted[item.ShortURL] = true
+		}
 	}
 }
 
@@ -223,12 +238,16 @@ func (s *LocalStorage) Resolve(_ context.Context, token string) (string, error) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Признак удаления проверяется раньше поиска:
+	// удалённый токен — 410,
+	// несуществующий — 404 (как в PG)
+	if s.deleted[token] {
+		return "", NewErrTokenIsDeleted(token)
+	}
+
 	url, ok := s.data[token]
 	if !ok {
 		return "", NewErrTokenNotFound(token)
-	}
-	if url == isDeleted {
-		return "", NewErrTokenIsDeleted(token)
 	}
 	return url, nil
 }
@@ -286,6 +305,9 @@ func (s *LocalStorage) DeleteByTokens(_ context.Context, tokens []string) error 
 
 	for _, token := range tokens {
 		delete(s.data, token)
+		// Жёсткое удаление снимает и признак мягкого: после него токен
+		// отвечает 404, а не 410 — в PG строка снесена целиком
+		delete(s.deleted, token)
 		s.deleteTokenFromUsers(token)
 	}
 
@@ -326,7 +348,7 @@ func (s *LocalStorage) ListUserURLs(_ context.Context, userID string) (UserURLs,
 
 	var res UserURLs
 	for _, tok := range tokens {
-		if url, exists := s.data[tok]; exists && url != isDeleted {
+		if url, exists := s.data[tok]; exists && !s.deleted[tok] {
 			res = append(res, UserURL{
 				ShortURL:    tok,
 				OriginalURL: url,
@@ -344,14 +366,14 @@ func (s *LocalStorage) MarkUserURLsDeleted(_ context.Context, batch ToMarkDelete
 	for _, it := range batch {
 		user, token := it.UserID, it.Token
 
-		url, foundURL := s.data[token]
-		if !foundURL || url == isDeleted {
+		if _, found := s.data[token]; !found {
 			continue
 		}
 
 		if s.isTokenBelongsToUser(token, user) {
-			s.deleteUsersToken(user, token)
-			s.data[token] = isDeleted
+			// Мягкое удаление — как в PG: URL записи сохраняется, признак
+			// удаления хранится отдельно, владелец и список токенов не меняются
+			s.deleted[token] = true
 		}
 	}
 	return nil
