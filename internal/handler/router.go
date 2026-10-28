@@ -206,7 +206,7 @@ func NewRouter(params RouterParams) *Router {
 		})
 
 		// JSON API
-		r.Group(func(r chi.Router) {
+		r.Route("/api", func(r chi.Router) {
 			r.Use(func(next http.Handler) http.Handler {
 				return responseContentTypeMiddleware(next, AppJSON)
 			})
