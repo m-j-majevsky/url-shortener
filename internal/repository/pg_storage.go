@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/m-j-majevsky/url-shortener/internal/model"
 )
 
 type (
@@ -122,7 +121,7 @@ func (s *pgStorage) Ping(ctx context.Context) error {
 
 // Важно:
 // Гарантировать уникальность StoreBatch.Token среди элемемнов параметра batch,
-// это ответсвенность вызывающего кода!
+// это ответственность вызывающего кода!
 func (s *pgStorage) BatchStore(ctx context.Context, batchReq StoreBatch, userID string) (StoreBatch, error) {
 	if len(batchReq) == 0 {
 		return StoreBatch{}, nil
@@ -255,25 +254,25 @@ func (s *pgStorage) CreateUser(ctx context.Context) (string, error) {
 	return id.String(), nil
 }
 
-func (s *pgStorage) ListUserURLs(ctx context.Context, userID string) (model.UserURLsRes, error) {
+func (s *pgStorage) ListUserURLs(ctx context.Context, userID string) (UserURLs, error) {
 	const q = `SELECT token, original_url
                FROM shorten_urls
                WHERE user_id = $1 AND is_deleted <> TRUE`
 
 	var userUIID pgtype.UUID
 	if err := userUIID.Scan(userID); err != nil {
-		return model.UserURLsRes{}, fmt.Errorf("неверный формат ID пользователя %q: %w", userID, err)
+		return UserURLs{}, fmt.Errorf("неверный формат ID пользователя %q: %w", userID, err)
 	}
 
 	rows, err := s.db.Query(ctx, q, userUIID)
 	if err != nil {
-		return model.UserURLsRes{}, fmt.Errorf("ошибка запроса по URL для пользователя c ID %q: %w", userID, err)
+		return UserURLs{}, fmt.Errorf("ошибка запроса по URL для пользователя c ID %q: %w", userID, err)
 	}
 	defer rows.Close()
 
-	userURLs, err := pgx.CollectRows(rows, pgx.RowToStructByName[model.UserURLsResItem])
+	userURLs, err := pgx.CollectRows(rows, pgx.RowToStructByName[UserURL])
 	if err != nil {
-		return model.UserURLsRes{}, fmt.Errorf("ошибка обработки ответа от хранилища: %w", err)
+		return UserURLs{}, fmt.Errorf("ошибка обработки ответа от хранилища: %w", err)
 	}
 
 	return userURLs, nil

@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/m-j-majevsky/url-shortener/internal/model"
 )
 
 type (
@@ -69,6 +68,11 @@ func (s *LocalStorage) exportRepr() storageRepr {
 	return result
 }
 
+// findUserByToken ищет пользователя, владеющего токеном.
+// Стоимость — O(n) по числу всех записей на каждый вызов; вызывается
+// из exportRepr в цикле, итого O(n²) на сохранение состояния.
+// Осознанный компромисс локального режима: FILE_STORAGE_PATH
+// рассчитан на небольшие объёмы данных.
 func (s *LocalStorage) findUserByToken(tok string) string {
 	for user, tokens := range s.users {
 		for _, t := range tokens {
@@ -232,7 +236,7 @@ func (s *LocalStorage) Resolve(_ context.Context, token string) (string, error) 
 // Важно:
 // Гарантировать уникальность StoreBatch.Token среди элемемнов параметра batch,
 // а также гарантировать остутствие пустых StoreBatch.Token или StoreBatch.OriginalURL,
-// это ответсвенность вызывающего кода!
+// это ответственность вызывающего кода!
 func (s *LocalStorage) BatchStore(_ context.Context, batch StoreBatch, userID string) (StoreBatch, error) {
 	result := make(StoreBatch, len(batch))
 	copy(result, batch)
@@ -311,19 +315,19 @@ func (s *LocalStorage) CreateUser(_ context.Context) (uid string, err error) {
 	return
 }
 
-func (s *LocalStorage) ListUserURLs(_ context.Context, userID string) (model.UserURLsRes, error) {
+func (s *LocalStorage) ListUserURLs(_ context.Context, userID string) (UserURLs, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	tokens, exists := s.users[userID]
 	if !exists {
-		return model.UserURLsRes{}, nil
+		return UserURLs{}, nil
 	}
 
-	var res model.UserURLsRes
+	var res UserURLs
 	for _, tok := range tokens {
 		if url, exists := s.data[tok]; exists && url != isDeleted {
-			res = append(res, model.UserURLsResItem{
+			res = append(res, UserURL{
 				ShortURL:    tok,
 				OriginalURL: url,
 			})

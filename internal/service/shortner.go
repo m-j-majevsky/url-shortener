@@ -50,7 +50,8 @@ type BatchURLStore interface {
 type UserURLsStore interface {
 	// ListUserURLs возвращает все записи (короткий URL, исходный URL)
 	// пользователя userID за время его жизни.
-	ListUserURLs(ctx context.Context, userID string) (model.UserURLsRes, error)
+	// Сервис мапит записи хранилища в DTO ответа API.
+	ListUserURLs(ctx context.Context, userID string) (repository.UserURLs, error)
 
 	// MarkUserURLsDeleted помечает токены из батча как удалённые в хранилище.
 	MarkUserURLsDeleted(ctx context.Context, batch repository.ToMarkDeletedReqBatch) error
@@ -318,7 +319,7 @@ func (s *Shortener) BatchStore(ctx context.Context, req model.BatchShortenReq, u
 
 	// batch вводится для внутреннего представления
 	// и обработки содержимого входного пакета в методах сервиса и хранилища
-	batch := repository.NewStoreBatch(req)
+	batch := newStoreBatch(req)
 	// В stored накапливаем успешно сохраненные в БД элементы batch
 	stored := make(repository.StoreBatch, 0, reqLen)
 
@@ -412,6 +413,18 @@ func batchForNextAttempt(storageRes repository.StoreBatch) repository.StoreBatch
 	return batch
 }
 
+// newStoreBatch строит батч для слоя данных из запроса API:
+// сервис сам мапит модель запроса в типы repository,
+// repository не знает о model.
+func newStoreBatch(req model.BatchShortenReq) repository.StoreBatch {
+	result := make(repository.StoreBatch, len(req))
+	for i := range req {
+		result[i].CorrelationID = req[i].CorrelationID
+		result[i].OriginalURL = req[i].OriginalURL
+	}
+	return result
+}
+
 // buildBatchShortenRes преобразует ответ от слоя данных к сервисному слою
 func buildBatchShortenRes(batch repository.StoreBatch) model.BatchShortenRes {
 	result := make(model.BatchShortenRes, 0, len(batch))
@@ -451,12 +464,18 @@ func (s *Shortener) restoreWithError(ctx context.Context, toRollback repository.
 // ListUserURLs запрашивает из хранилища все записи вида (shortenURL, originalURL),
 // сохраненные пользователем userID за время его жизни
 func (s *Shortener) ListUserURLs(ctx context.Context, userID string) (model.UserURLsRes, error) {
-	res, err := s.config.Storage.ListUserURLs(ctx, userID)
+	items, err := s.config.Storage.ListUserURLs(ctx, userID)
 	if err != nil {
 		return model.UserURLsRes{}, fmt.Errorf("ошибка хранилища: %w", err)
 	}
-	if res == nil {
-		res = model.UserURLsRes{}
+
+	// Сервис мапит записи слоя данных в DTO ответа API.
+	res := make(model.UserURLsRes, len(items))
+	for i, item := range items {
+		res[i] = model.UserURLsResItem{
+			ShortURL:    item.ShortURL,
+			OriginalURL: item.OriginalURL,
+		}
 	}
 	return res, nil
 }

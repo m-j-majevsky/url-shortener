@@ -13,7 +13,7 @@ type (
 		Token string
 	}
 
-	// Ошибка, когда сокращаемый URL уже есть в хранилице
+	// Ошибка, когда сокращаемый URL уже есть в хранилище
 	ErrOriginalURLExists struct {
 		StoredToken string
 		URL         string
