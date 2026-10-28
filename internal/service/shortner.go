@@ -129,6 +129,8 @@ func DefaultShortenerConfig() ShortenerConfig {
 type Shortener struct {
 	config                 ShortenerConfig
 	deletionQueue          chan repository.ToMarkDeletedReqItem
+	deletionQueueMutex     sync.RWMutex
+	deletionQueueClosed    bool
 	deadLetterLogFile      *os.File
 	deadLetterLogFileMutex sync.Mutex
 
@@ -162,6 +164,9 @@ func NewShortener(cfg ShortenerConfig) (*Shortener, error) {
 	if cfg.DeletionBatchSize <= 0 {
 		return nil, fmt.Errorf("%s: размер батча удаляемых за раз записей должен быть положительным", errCfgHeader)
 	}
+	if cfg.DeletionQueueBuffer <= 0 {
+		return nil, fmt.Errorf("%s: размер очереди запросов на удаление должен быть положительным", errCfgHeader)
+	}
 
 	log := cfg.Logger
 	if log == nil {
@@ -177,8 +182,21 @@ func NewShortener(cfg ShortenerConfig) (*Shortener, error) {
 	return shortener, nil
 }
 
+// StopItemsDeletionProcessor закрывает очередь запросов на удаление.
+// Повторный вызов безопасен.
+//
+// Закрытие сериализовано с putInDeletionQueue через RWMutex:
+// отправки в очередь под read-lock завершаются раньше закрытия,
+// поэтому паника «send on closed channel» невозможна даже в сценарии,
+// когда хендлеры в полёте на момент останова сервиса.
 func (s *Shortener) StopItemsDeletionProcessor() {
-	close(s.deletionQueue)
+	s.deletionQueueMutex.Lock()
+	defer s.deletionQueueMutex.Unlock()
+
+	if !s.deletionQueueClosed {
+		s.deletionQueueClosed = true
+		close(s.deletionQueue)
+	}
 }
 
 func (s *Shortener) CleanUp() {
@@ -187,6 +205,7 @@ func (s *Shortener) CleanUp() {
 
 	if s.deadLetterLogFile != nil {
 		s.deadLetterLogFile.Close()
+		s.deadLetterLogFile = nil
 	}
 }
 
@@ -365,6 +384,15 @@ func (s *Shortener) BatchStore(ctx context.Context, req model.BatchShortenReq, u
 		return model.BatchShortenRes{}, s.restoreWithError(ctx, stored, fmt.Errorf("ошибка сохранения пакета: %w", err))
 	} // for on nAttempts
 
+	if len(stored) < reqLen {
+		// Дошли сюда — попытки исчерпаны, а часть элементов так и не сохранена.
+		// Молча возвращать неполный ответ нельзя: клиент отправил reqLen URL,
+		// а получил бы меньше без единой ошибки.
+		// Зачищаем закоммиченное этим запросом и отдаем ошибку наверх.
+		return model.BatchShortenRes{}, s.restoreWithError(ctx, stored,
+			fmt.Errorf("исчерпаны попытки сохранения пакета: не удалось сохранить %d URL из %d за %d попыток", reqLen-len(stored), reqLen, s.config.MaxStoringAttempts))
+	}
+
 	return buildBatchShortenRes(stored), nil
 }
 
@@ -440,15 +468,24 @@ func buildBatchShortenRes(batch repository.StoreBatch) model.BatchShortenRes {
 }
 
 // restoreWithError пробует удалить данные из батча toRollback из хранилища.
+// Откатываются лишь записи, добавленные этим запросом: элемент с признаком
+// ConflictedURL уже существовал в хранилище до запроса (его токен — чужой),
+// и его удаление затронуло бы чужие данные — DeleteByTokens не фильтрует по пользователю.
 // В случае успешного удаления возвращает errToReturn.
 // В случае ошибки отката, возвращает errors.Join ошибки errToReturn и ошибки,
 // не позволившей выполнить откат.
 func (s *Shortener) restoreWithError(ctx context.Context, toRollback repository.StoreBatch, errToReturn error) error {
 	errs := []error{errToReturn}
-	if len(toRollback) > 0 {
+	rollbackBatch := make(repository.StoreBatch, 0, len(toRollback))
+	for _, it := range toRollback {
+		if !it.ConflictedURL {
+			rollbackBatch = append(rollbackBatch, it)
+		}
+	}
+	if len(rollbackBatch) > 0 {
 		// Пробуем откатиться, раз что-то уже закоммичено в БД
-		tokens := make([]string, 0, len(toRollback))
-		for _, it := range toRollback {
+		tokens := make([]string, 0, len(rollbackBatch))
+		for _, it := range rollbackBatch {
 			tokens = append(tokens, it.Token)
 		}
 
@@ -500,6 +537,20 @@ func (s *Shortener) MarkUserURLsDeleted(ctx context.Context, batch model.TokensT
 }
 
 func (s *Shortener) putInDeletionQueue(batch repository.ToMarkDeletedReqBatch) error {
+	s.deletionQueueMutex.RLock()
+	defer s.deletionQueueMutex.RUnlock()
+
+	// Очередь уже закрыта (graceful shutdown истёк по таймауту,
+	// а хендлеры всё ещё в полёте): отдаем пакет в dead-letter штатным
+	// путём ошибки вместо паники «send on closed channel»
+	if s.deletionQueueClosed {
+		errs := make([]error, 0, len(batch))
+		for _, it := range batch {
+			errs = append(errs, NewErrTokenLeftUndeleted(it.Token, it.UserID))
+		}
+		return errors.Join(errs...)
+	}
+
 	errs := make([]error, 0, len(batch))
 	for _, it := range batch {
 		select {
@@ -517,6 +568,11 @@ func (s *Shortener) StartItemsDeletionProcessor(ctx context.Context) {
 	ticker := time.NewTicker(s.config.DeletionQueueFlushTimeout)
 	defer ticker.Stop()
 
+	// flushCtx переживает отмену сигнального ctx: отложенные удаления
+	// доводятся до хранилища даже при останове сервиса по SIGTERM,
+	// пока жив пул соединений (он закрывается позже — см. main)
+	flushCtx := context.WithoutCancel(ctx)
+
 	var storageWg sync.WaitGroup
 
 	flush := func() {
@@ -531,7 +587,7 @@ func (s *Shortener) StartItemsDeletionProcessor(ctx context.Context) {
 		go func(batch repository.ToMarkDeletedReqBatch) {
 			defer storageWg.Done()
 
-			if err := s.config.Storage.MarkUserURLsDeleted(ctx, batch); err != nil {
+			if err := s.config.Storage.MarkUserURLsDeleted(flushCtx, batch); err != nil {
 				s.log.Error("storage error while running batch item deletion query", zap.Error(err))
 				// Сохраняем в очередь данные, которые не удалось записать
 				s.writeToDeadLetterLog(NewUndeletedItemsFromReqBatch(batch))
