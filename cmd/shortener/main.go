@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -108,7 +109,33 @@ func main() {
 		}
 		defer pool.Close()
 
-		// Накатываем миграции
+		// Запрещаем параллельный запуск второго инстанса.
+		// pg_try_advisory_lock — session-level: держится, пока жив коннект.
+		// При падении процесса коннект рвётся, PostgreSQL автоматически снимает lock.
+		const instanceLockKey = 20260101
+		lockConn, err := pool.Acquire(ctx)
+		if err != nil {
+			mainLogger.Fatal("не удалось получить коннект для instance lock", zap.Error(err))
+		}
+
+		var locked bool
+		err = lockConn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", instanceLockKey).Scan(&locked)
+		if err != nil {
+			lockConn.Release()
+			mainLogger.Fatal("ошибка запроса instance lock", zap.Error(err))
+		}
+		if !locked {
+			lockConn.Release()
+			mainLogger.Fatal("другой инстанс url-shortener уже запущен — запуск отменён")
+		}
+		mainLogger.Info("instance lock захвачен")
+		defer func() {
+			lockConn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", instanceLockKey)
+			lockConn.Release()
+		}()
+
+		// Накатываем миграции (после захвата instance lock,
+		// чтобы исключить параллельный запуск миграций из второго инстанса)
 		if err := migrations.RunMigrations(ctx, cfg.DatabaseDSN); err != nil {
 			mainLogger.Fatal(err.Error(), zap.String("event", "executing migrations"))
 		}
@@ -117,6 +144,20 @@ func main() {
 		svcConfig.Storage = pgStorage
 		mainLogger.Info("включён режим удалённого хранилища", zap.String("event", "preparing storage"))
 	} else {
+		// Защита от запуска второго инстанса в режиме файлового хранилища:
+		// два экземпляра, пишущих в один файл состояния, затёрли бы данные друг друга.
+		// flock — advisory lock уровня ОС: держится, пока жив процесс, при падении
+		// процесса ОС снимает lock автоматически (аналог pg_try_advisory_lock).
+		// С пустым путём блокировка не нужна: хранилище живёт в памяти,
+		// и конфликт портов и так не даст запуститься второму экземпляру на том же адресе.
+		if cfg.FileStoragePath != "" {
+			lockFile, err := acquireFileLock(cfg.FileStoragePath + ".lock")
+			if err != nil {
+				mainLogger.Fatal(err.Error(), zap.String("event", "acquiring instance lock"))
+			}
+			defer releaseFileLock(mainLogger, lockFile)
+		}
+
 		localStorage, saveStateMode, err = loadLocalStorage(mainLogger, cfg.FileStoragePath)
 		if err != nil {
 			mainLogger.Fatal(err.Error(), zap.String("event", "loading storage state from file"))
@@ -269,6 +310,38 @@ func saveStateDeferred(log *zap.Logger, storage *repository.LocalStorage, path s
 		log.Error("ошибка сохранения локального хранилища в defer", zap.Error(err), zap.String("path", path), event)
 	} else {
 		log.Info("локальное хранилище сохранено в defer", zap.String("path", path), event)
+	}
+}
+
+// acquireFileLock берёт эксклюзивный advisory flock на файл-замок рядом с файлом
+// состояния локального хранилища. Отдельный файл ".lock" нужен, чтобы не создавать
+// сам файл состояния: LoadFromFile отличает «файла нет — стартуем с пустого
+// хранилища» от битого содержимого, и создание пустого файла состояния здесь
+// сломало бы эту семантику. Файл-замок при этом остаётся на диске пустым — это
+// нормально: lock снимается по закрытию файла или при смерти процесса.
+func acquireFileLock(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o666)
+	if err != nil {
+		return nil, fmt.Errorf("не удалось открыть файл для instance lock %q: %w", path, err)
+	}
+	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if err == nil {
+		return f, nil
+	}
+	f.Close()
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		return nil, errors.New("другой инстанс url-shortener уже запущен — запуск отменён")
+	}
+	return nil, fmt.Errorf("ошибка запроса instance lock: %w", err)
+}
+
+// releaseFileLock снимает instance lock и закрывает lock-файл (предполагается defer вызов).
+func releaseFileLock(log *zap.Logger, f *os.File) {
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
+		log.Error("ошибка снятия instance lock", zap.Error(err))
+	}
+	if err := f.Close(); err != nil {
+		log.Error("ошибка закрытия lock-файла", zap.Error(err))
 	}
 }
 
