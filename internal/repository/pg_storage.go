@@ -206,7 +206,7 @@ func (s *pgStorage) DeleteByTokens(ctx context.Context, tokens []string) error {
 		return fmt.Errorf("ошибка создания транзакции: %w", err)
 	}
 	// Откат из-за ошибки. Commit ниже завершает tx, и тогда Rollback вернёт
-	// sql.ErrTxDone — это нормально, ошибку игнорируем.
+	// pgconn.ErrTxClosed — это нормально, ошибку игнорируем.
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	const qDelete = "batch_delete"
@@ -240,7 +240,7 @@ func (s *pgStorage) CheckUserExists(ctx context.Context, userID string) (exists 
 		return false, fmt.Errorf("ошибка запроса пользователя с ID = %v: %w", userID, err)
 	}
 
-	return
+	return exists, nil
 }
 
 func (s *pgStorage) CreateUser(ctx context.Context) (string, error) {

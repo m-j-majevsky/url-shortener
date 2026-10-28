@@ -479,11 +479,18 @@ func (rt *Router) shortenBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setBaseForShortenBatch(rt.baseURL, batchRes)
-	w.WriteHeader(getShortenBatchStatusCode(batchRes))
-	if err := json.NewEncoder(w).Encode(batchRes); err != nil {
+	// Сначала сериализуем ответ в буфер: если кодирование не удалось,
+	// ещё можно честно ответить 500, не отправив заголовок с кодом 201/409.
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(batchRes); err != nil {
 		rt.log.Debug("error encoding response", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
+	}
+
+	w.WriteHeader(getShortenBatchStatusCode(batchRes))
+	if _, err := buf.WriteTo(w); err != nil {
+		rt.log.Debug("error writing response body", zap.Error(err))
 	}
 }
 
@@ -531,15 +538,24 @@ func (rt *Router) getUserURLs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(getUserURLsStatusCode(&res))
 	if len(res) != 0 {
 		setBaseForUserURLs(rt.baseURL, res)
-		err := json.NewEncoder(w).Encode(res)
-		if err != nil {
+		// Сначала сериализуем ответ в буфер: если кодирование не удалось,
+		// ещё можно честно ответить 500, не отправив заголовок с кодом 200.
+		var buf bytes.Buffer
+		if err := json.NewEncoder(&buf).Encode(res); err != nil {
 			rt.log.Debug("error encoding response", zap.Error(err))
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+
+		w.WriteHeader(getUserURLsStatusCode(&res))
+		if _, err := buf.WriteTo(w); err != nil {
+			rt.log.Debug("error writing response body", zap.Error(err))
+		}
+	} else {
+		// Пустой список: только заголовок 204 No Content, без тела.
+		w.WriteHeader(getUserURLsStatusCode(&res))
 	}
 }
 

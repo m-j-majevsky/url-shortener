@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"errors"
+	"io"
 )
 
 // Абстрагирует источник случайных байт.
@@ -15,8 +16,7 @@ func GenerateRandomBytes(provider RandomByteProvider, n int) ([]byte, error) {
 		return nil, errors.New("запрашиваемая длина последовательности должна быть неотрицательной")
 	}
 	b := make([]byte, n)
-	_, err := provider.Read(b)
-	if err != nil {
+	if _, err := io.ReadFull(provider, b); err != nil {
 		return nil, err
 	}
 	return b, nil

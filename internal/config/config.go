@@ -73,7 +73,7 @@ func readApplicationConfig() (ApplicationConfig, error) {
 		defaultLogLevel  = "info"
 		defaultRunAddr   = ":8080"
 		defaultBaseURL   = "http://localhost:8080"
-		defaultCookieNm  = "user_id_jwot"
+		defaultCookieNm  = "user_id_jwt"
 		defaultSaveState = time.Second // дефолт флага -s
 	)
 

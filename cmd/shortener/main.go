@@ -131,18 +131,18 @@ func main() {
 		defer saveStateDeferred(mainLogger, localStorage, cfg.FileStoragePath)
 	}
 
-	service, router, err := makeServiceAndRouter(handlerLogger, svcConfig, cfg, auditor)
+	svc, router, err := makeServiceAndRouter(handlerLogger, svcConfig, cfg, auditor)
 	if err != nil {
 		mainLogger.Fatal(err.Error(), zap.String("event", "initializing service"))
 	}
-	defer service.CleanUp()
+	defer svc.CleanUp()
 
 	// Настраиваем глобальную систему канализации и обработки запросов на удаление записей (DELETE /api/user/urls)
 	var backgroundWg sync.WaitGroup
 	backgroundWg.Add(1)
 	go func() {
 		defer backgroundWg.Done()
-		service.StartItemsDeletionProcessor(ctx)
+		svc.StartItemsDeletionProcessor(ctx)
 	}()
 
 	// Создаем сервер явно, поскольку ссылку на него придется использовать для shutdown'а по сигналу от ОС
@@ -187,7 +187,7 @@ func main() {
 
 	// Закрываем канал для мягкой остановки глобального процесса канализации и обработки
 	// запросов на удаление записей (DELETE /api/user/urls)
-	service.StopItemsDeletionProcessor()
+	svc.StopItemsDeletionProcessor()
 	mainLogger.Info("Deletion processor input queue channel closed", event)
 
 	// Дожидаемся окончания обработки данных в канале, их сохранения или логирования ошибки

@@ -316,14 +316,14 @@ func (s *LocalStorage) DeleteByTokens(_ context.Context, tokens []string) error 
 
 func (s *LocalStorage) CheckUserExists(_ context.Context, uid string) (exists bool, err error) {
 	if uid == "" {
-		return
+		return false, nil
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	exists = (s.users[uid] != nil)
-	return
+	return exists, nil
 }
 
 func (s *LocalStorage) CreateUser(_ context.Context) (uid string, err error) {
@@ -334,7 +334,7 @@ func (s *LocalStorage) CreateUser(_ context.Context) (uid string, err error) {
 
 	s.users[uid] = make([]string, 0)
 
-	return
+	return uid, nil
 }
 
 func (s *LocalStorage) ListUserURLs(_ context.Context, userID string) (UserURLs, error) {
