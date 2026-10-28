@@ -184,30 +184,32 @@ func NewRouter(params RouterParams) *Router {
 		log:     log,
 	}
 
-	// Текстовый API
-	cr.Route("/", func(r chi.Router) {
-		r.Use(func(next http.Handler) http.Handler {
-			return responseContentTypeMiddleware(next, TextPlain)
-		})
+	// API: CookieMiddleware применяется один раз на группу защищённых эндпоинтов
+	cr.Group(func(r chi.Router) {
 		r.Use(CookieMiddleware(mux.log, params.Service, params.UserCookie))
 
-		r.Post("/", mux.shortenLongURLForText)
-	})
-
-	// JSON API
-	cr.Route("/api", func(r chi.Router) {
-		r.Use(func(next http.Handler) http.Handler {
-			return responseContentTypeMiddleware(next, AppJSON)
-		})
-		r.Use(CookieMiddleware(mux.log, params.Service, params.UserCookie))
-
-		r.Route("/user/urls", func(rr chi.Router) {
-			rr.Get("/", mux.getUserURLs)
-			rr.Delete("/", mux.markUserURLsDeleted)
+		// Текстовый API
+		r.Group(func(r chi.Router) {
+			r.Use(func(next http.Handler) http.Handler {
+				return responseContentTypeMiddleware(next, TextPlain)
+			})
+			r.Post("/", mux.shortenLongURLForText)
 		})
 
-		r.Post("/shorten", mux.shortenLongURLForJSON)
-		r.Post("/shorten/batch", mux.shortenBatch)
+		// JSON API
+		r.Group(func(r chi.Router) {
+			r.Use(func(next http.Handler) http.Handler {
+				return responseContentTypeMiddleware(next, AppJSON)
+			})
+
+			r.Route("/user/urls", func(rr chi.Router) {
+				rr.Get("/", mux.getUserURLs)
+				rr.Delete("/", mux.markUserURLsDeleted)
+			})
+
+			r.Post("/shorten", mux.shortenLongURLForJSON)
+			r.Post("/shorten/batch", mux.shortenBatch)
+		})
 	})
 
 	cr.Get("/{token}", mux.resolveShortURL)
