@@ -33,7 +33,7 @@ func NewFileSink(path string) (*FileSink, error) {
 	// O_CREATE — создание файла при первом запуске.
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
-		return nil, fmt.Errorf("cannot open audit file sink %q: %w", path, err)
+		return nil, fmt.Errorf("не удалось открыть файловый приёмник аудита %q: %w", path, err)
 	}
 	return &FileSink{file: file}, nil
 }
@@ -42,7 +42,7 @@ func NewFileSink(path string) (*FileSink, error) {
 func (fs *FileSink) Send(event AuditEvent) error {
 	data, err := json.Marshal(event)
 	if err != nil {
-		return fmt.Errorf("cannot marshal audit event: %w", err)
+		return fmt.Errorf("не удалось сериализовать событие аудита: %w", err)
 	}
 	data = append(data, '\n')
 
@@ -50,7 +50,7 @@ func (fs *FileSink) Send(event AuditEvent) error {
 	defer fs.mu.Unlock()
 
 	if _, err := fs.file.Write(data); err != nil {
-		return fmt.Errorf("cannot write audit event to file: %w", err)
+		return fmt.Errorf("не удалось записать событие аудита в файл: %w", err)
 	}
 	return nil
 }
@@ -79,22 +79,22 @@ func NewHTTPSink(url string) *HTTPSink {
 func (hs *HTTPSink) Send(event AuditEvent) error {
 	data, err := json.Marshal(event)
 	if err != nil {
-		return fmt.Errorf("cannot marshal audit event: %w", err)
+		return fmt.Errorf("не удалось сериализовать событие аудита: %w", err)
 	}
 
 	resp, err := hs.client.Post(hs.url, ContentTypeJSON, bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("cannot send audit event to %q: %w", hs.url, err)
+		return fmt.Errorf("не удалось отправить событие аудита в %q: %w", hs.url, err)
 	}
 	defer resp.Body.Close()
 
 	// Дочитываем и отбрасываем тело ответа, чтобы соединение можно было переиспользовать
 	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
-		return fmt.Errorf("cannot drain audit sink response: %w", err)
+		return fmt.Errorf("не удалось прочитать ответ приёмника аудита: %w", err)
 	}
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		return fmt.Errorf("audit sink %q returned status %d", hs.url, resp.StatusCode)
+		return fmt.Errorf("приёмник аудита %q вернул статус %d", hs.url, resp.StatusCode)
 	}
 	return nil
 }

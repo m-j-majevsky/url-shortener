@@ -128,7 +128,7 @@ func NewBroadcaster(log *zap.Logger, observers ...Observer) *Broadcaster {
 			defer b.wg.Done()
 			for event := range p.queue {
 				if err := p.observer.Send(event); err != nil {
-					b.log.Error("audit event sending failed", zap.Error(err))
+					b.log.Error("ошибка отправки события аудита", zap.Error(err))
 				}
 			}
 		}(pipe)
@@ -164,7 +164,7 @@ func (b *Broadcaster) dispatch() {
 				// отбрасываем, чтобы медленный приёмник не задерживал диспетчер
 				// и доставку остальным приёмникам. Потеря фиксируется счётчиком.
 				b.dropped.Add(1)
-				b.log.Error("audit observer queue overflow, event dropped",
+				b.log.Error("переполнена очередь наблюдателя аудита, событие отброшено",
 					zap.String("sink", fmt.Sprintf("%T", p.observer)))
 			}
 		}
@@ -195,7 +195,7 @@ func (b *Broadcaster) Notify(event AuditEvent) {
 		// Входной буфер переполнен: событие отбрасывается, чтобы не блокировать
 		// хэндлер. Потеря фиксируется счётчиком.
 		b.dropped.Add(1)
-		b.log.Error("audit event queue overflow, event dropped",
+		b.log.Error("переполнена очередь событий аудита, событие отброшено",
 			zap.Any("event", event))
 	}
 }
@@ -233,6 +233,6 @@ func (b *Broadcaster) Close() {
 	// по факту доставки, поэтому события, отброшенные до начала Close,
 	// в неё попадают.
 	if n := b.dropped.Load(); n > 0 {
-		b.log.Warn("audit events dropped during runtime", zap.Int64("dropped", n))
+		b.log.Warn("события аудита отброшены во время работы", zap.Int64("dropped", n))
 	}
 }

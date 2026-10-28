@@ -78,18 +78,18 @@ func readApplicationConfig() (ApplicationConfig, error) {
 	)
 
 	// Шаг 2: парсим флаги с жёсткими дефолтами.
-	flag.StringVar(&cfg.ServerRunAddress, "a", defaultRunAddr, "address and port to run server")
-	flag.StringVar(&cfg.TargetBaseURL, "b", defaultBaseURL, "target URL base path")
-	flag.StringVar(&cfg.LogLevel, "l", defaultLogLevel, "log level")
-	flag.StringVar(&cfg.DatabaseDSN, "d", "", "data source name")
-	flag.StringVar(&cfg.FileStoragePath, "f", "", "path to storage saved state")
-	flag.StringVar(&cfg.CookieUserIDName, "u", defaultCookieNm, "user ID cookie name")
+	flag.StringVar(&cfg.ServerRunAddress, "a", defaultRunAddr, "адрес и порт для запуска сервера")
+	flag.StringVar(&cfg.TargetBaseURL, "b", defaultBaseURL, "базовый путь целевого URL")
+	flag.StringVar(&cfg.LogLevel, "l", defaultLogLevel, "уровень логирования")
+	flag.StringVar(&cfg.DatabaseDSN, "d", "", "строка подключения к базе данных")
+	flag.StringVar(&cfg.FileStoragePath, "f", "", "путь к файлу сохранённого состояния хранилища")
+	flag.StringVar(&cfg.CookieUserIDName, "u", defaultCookieNm, "имя куки с идентификатором пользователя")
 	// Резерв: параметр не потребляется кодом (состояние сохраняется
 	// через defer saveStateDeferred в main), но флаг сохраняем, чтобы
 	// flag.Parse не падал, если платформа передаёт -s.
-	flag.DurationVar(&cfg.SaveStateInterval, "s", defaultSaveState, "save state interval (reserved, not consumed)")
-	flag.StringVar(&cfg.AuditFile, "audit-file", "", "path to file audit sink; empty value disables file audit")
-	flag.StringVar(&cfg.AuditURL, "audit-url", "", "URL of remote audit sink; empty value disables remote audit")
+	flag.DurationVar(&cfg.SaveStateInterval, "s", defaultSaveState, "интервал сохранения состояния (зарезервировано, не используется)")
+	flag.StringVar(&cfg.AuditFile, "audit-file", "", "путь к файловому приёмнику аудита; пустое значение отключает файловый аудит")
+	flag.StringVar(&cfg.AuditURL, "audit-url", "", "URL удалённого приёмника аудита; пустое значение отключает удалённый аудит")
 	flag.Parse()
 
 	// Шаг 3: переменные окружения перекрывают флаги.

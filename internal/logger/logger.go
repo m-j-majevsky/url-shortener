@@ -77,13 +77,13 @@ func WithLogging(log *zap.Logger) func(http.Handler) http.Handler {
 			duration := time.Since(start)
 
 			// отправляем сведения о запросе в zap
-			log.Info("incoming request",
+			log.Info("входящий запрос",
 				zap.String("uri", r.RequestURI),
 				zap.String("method", r.Method),
 				zap.Duration("duration", duration),
 			)
 			// следом отправляем в zap сведения об ответе сервера
-			log.Info("server response",
+			log.Info("ответ сервера",
 				zap.Int("status", responseData.status), // получаем перехваченный код статуса ответа
 				zap.Int("size", responseData.size),     // получаем перехваченный размер ответа
 			)

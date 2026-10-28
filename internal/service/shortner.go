@@ -616,7 +616,7 @@ func (s *Shortener) StartItemsDeletionProcessor(ctx context.Context) {
 			defer storageWg.Done()
 
 			if err := s.config.Storage.MarkUserURLsDeleted(flushCtx, batch); err != nil {
-				s.log.Error("storage error while running batch item deletion query", zap.Error(err))
+				s.log.Error("ошибка хранилища при выполнении запроса пакетного удаления записей", zap.Error(err))
 				// Сохраняем в очередь данные, которые не удалось записать
 				s.writeToDeadLetterLog(NewUndeletedItemsFromReqBatch(batch))
 

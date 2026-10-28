@@ -83,12 +83,12 @@ func main() {
 			mainLogger.Fatal(err.Error(), zap.String("event", "opening audit file sink"))
 		}
 		auditObservers = append(auditObservers, fileSink)
-		mainLogger.Info("Audit file sink is on", zap.String("path", cfg.AuditFile))
+		mainLogger.Info("файловый приёмник аудита включён", zap.String("path", cfg.AuditFile))
 	}
 
 	if cfg.AuditURL != "" {
 		auditObservers = append(auditObservers, audit.NewHTTPSink(cfg.AuditURL))
-		mainLogger.Info("Audit remote sink is on", zap.String("url", cfg.AuditURL))
+		mainLogger.Info("удалённый приёмник аудита включён", zap.String("url", cfg.AuditURL))
 	}
 
 	// Точка диспетчеризации событий аудита; без наблюдателей Notify является no-op
@@ -115,7 +115,7 @@ func main() {
 
 		pgStorage := repository.NewPgStorage(pool)
 		svcConfig.Storage = pgStorage
-		mainLogger.Info("Remote storage mode is on", zap.String("event", "preparing storage"))
+		mainLogger.Info("включён режим удалённого хранилища", zap.String("event", "preparing storage"))
 	} else {
 		localStorage, saveStateMode, err = loadLocalStorage(mainLogger, cfg.FileStoragePath)
 		if err != nil {
@@ -123,7 +123,7 @@ func main() {
 		}
 
 		svcConfig.Storage = localStorage
-		mainLogger.Info("Local storage mode is on", zap.String("event", "preparing storage"))
+		mainLogger.Info("включён режим локального хранилища", zap.String("event", "preparing storage"))
 	}
 
 	if saveStateMode && cfg.FileStoragePath != "" {
@@ -154,7 +154,7 @@ func main() {
 	// Сам сервер запускаем фоном; ошибка запуска (например, занятый порт) отправляется
 	// в канал, из которого её читает main, — иначе ошибка терялась бы в горутине:
 	// сервис оставался бы живым, но не отвечающим на запросы.
-	serverLogger.Info("Starting server", zap.String("address", server.Addr),
+	serverLogger.Info("сервис запущен", zap.String("address", server.Addr),
 		zap.String("event", "starting server"))
 	errCh := make(chan error, 1)
 	go func() {
@@ -174,21 +174,21 @@ func main() {
 
 	// Инициируем graceful shutdown
 	event := zap.String("event", "shutdown on signal")
-	serverLogger.Info("Shutdown signal received", zap.String("cause", context.Cause(ctx).Error()), event)
+	serverLogger.Info("получен сигнал завершения", zap.String("cause", context.Cause(ctx).Error()), event)
 
 	shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer shutdownRelease()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		serverLogger.Error("Graceful shutdown timed out", zap.Error(err), event)
+		serverLogger.Error("превышен таймаут graceful shutdown HTTP-сервера", zap.Error(err), event)
 	} else {
-		serverLogger.Info("HTTP server stopped gracefully", event)
+		serverLogger.Info("HTTP-сервер остановлен корректно", event)
 	}
 
 	// Закрываем канал для мягкой остановки глобального процесса канализации и обработки
 	// запросов на удаление записей (DELETE /api/user/urls)
 	svc.StopItemsDeletionProcessor()
-	mainLogger.Info("Deletion processor input queue channel closed", event)
+	mainLogger.Info("входной канал очереди обработчика удалений закрыт", event)
 
 	// Дожидаемся окончания обработки данных в канале, их сохранения или логирования ошибки
 	backgroundWg.Wait()
@@ -210,11 +210,11 @@ func main() {
 		// Дедлайн истёк: приёмники сознательно не закрываем — воркеры аудита ещё
 		// могут отправлять события, и закрытие файла посреди записи дало бы ошибки.
 		// Оставшаяся горутина завершится вместе с процессом.
-		mainLogger.Error("audit delivery wait timed out, audit sinks left unclosed",
+		mainLogger.Error("истекло время ожидания доставки аудита, приёмники аудита не закрыты",
 			zap.Duration("timeout", auditCloseTimeout), event)
 	}
 
-	mainLogger.Info("Application shutting down gracefully", zap.String("event", "shutdown complete"))
+	mainLogger.Info("сервис остановлен", zap.String("event", "shutdown complete"))
 }
 
 // Создаёт настроенный пул соединений и проверяет подключение.
@@ -250,12 +250,12 @@ func loadLocalStorage(log *zap.Logger, storagePath string) (*repository.LocalSto
 
 	err := storage.LoadFromFile(storagePath)
 	if err == nil {
-		log.Info("Local storage read successfully", zap.String("path", storagePath), event)
+		log.Info("локальное хранилище загружено из файла", zap.String("path", storagePath), event)
 		return storage, true, nil
 	}
 
 	if errors.Is(err, os.ErrNotExist) {
-		log.Info("Local storage file not found, starting with empty storage", zap.String("path", storagePath), event)
+		log.Info("файл локального хранилища не найден, начинаем с пустого хранилища", zap.String("path", storagePath), event)
 		return storage, true, nil
 	}
 
@@ -266,9 +266,9 @@ func loadLocalStorage(log *zap.Logger, storagePath string) (*repository.LocalSto
 func saveStateDeferred(log *zap.Logger, storage *repository.LocalStorage, path string) {
 	event := zap.String("event", "deferred state saving")
 	if err := storage.SaveToFile(path); err != nil {
-		log.Error("Failed to save local storage in defer", zap.Error(err), zap.String("path", path), event)
+		log.Error("ошибка сохранения локального хранилища в defer", zap.Error(err), zap.String("path", path), event)
 	} else {
-		log.Info("Local storage saved in defer", zap.String("path", path), event)
+		log.Info("локальное хранилище сохранено в defer", zap.String("path", path), event)
 	}
 }
 
@@ -294,7 +294,7 @@ func closeAuditSinks(log *zap.Logger, observers []audit.Observer) {
 		// кто поддерживает io.Closer
 		if closer, ok := obs.(io.Closer); ok {
 			if err := closer.Close(); err != nil {
-				log.Error("audit sink closing failed", zap.Error(err))
+				log.Error("ошибка закрытия приёмника аудита", zap.Error(err))
 			}
 		}
 	}

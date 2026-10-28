@@ -220,14 +220,14 @@ func CookieMiddleware(log *zap.Logger, users UserRegistrator, params UserCookieP
 			if setNewCookie {
 				userID, err = users.CreateUser(r.Context())
 				if err != nil {
-					log.Error("user creating failed", zap.Error(err))
+					log.Error("ошибка создания пользователя", zap.Error(err))
 					w.WriteHeader(http.StatusInternalServerError)
 					return
 				}
 
 				responseCookieValue, err := auth.GenerateUserIDJWT(userID, params.UserCookieTTL, params.SigningKey)
 				if err != nil {
-					log.Error("JWT encrypting failed", zap.Error(err))
+					log.Error("ошибка шифрования JWT", zap.Error(err))
 					w.WriteHeader(http.StatusInternalServerError)
 					return
 				}
@@ -245,7 +245,7 @@ func CookieMiddleware(log *zap.Logger, users UserRegistrator, params UserCookieP
 				// userID содержит непустое значение. Проверим его
 				found, err := users.CheckUserExists(r.Context(), userID)
 				if err != nil {
-					log.Error("user check in storage failed", zap.Error(err))
+					log.Error("ошибка проверки пользователя в хранилище", zap.Error(err))
 					w.WriteHeader(http.StatusInternalServerError)
 					return
 				}
