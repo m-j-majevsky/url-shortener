@@ -144,22 +144,22 @@ func NewShortener(cfg ShortenerConfig) (*Shortener, error) {
 		return nil, fmt.Errorf("%s: не задан генератор случайных данных", errCfgHeader)
 	}
 	if cfg.BytesToGenerate <= 0 {
-		return nil, fmt.Errorf("%s: число генерируемых байт должно быть неотрицательно", errCfgHeader)
+		return nil, fmt.Errorf("%s: число генерируемых байт должно быть положительным", errCfgHeader)
 	}
 	if cfg.MinTokenLength <= 0 || cfg.MaxTokenLength <= 0 {
-		return nil, fmt.Errorf("%s: границы длин токена должны быть неотрицательны", errCfgHeader)
+		return nil, fmt.Errorf("%s: границы длин токена должны быть положительными", errCfgHeader)
 	}
 	if cfg.MinTokenLength > cfg.MaxTokenLength {
 		return nil, fmt.Errorf("%s: наименьшая допустимая длина токена не должна превосходить наибольшую", errCfgHeader)
 	}
 	if cfg.MaxGeneratingAttempts <= 0 {
-		return nil, fmt.Errorf("%s: количество попыток создать уникальный токен должно быть неотрицательно", errCfgHeader)
+		return nil, fmt.Errorf("%s: количество попыток создать уникальный токен должно быть положительным", errCfgHeader)
 	}
 	if cfg.MaxStoringAttempts <= 0 {
-		return nil, fmt.Errorf("%s: количество попыток сделать запись в хранилище должно быть неотрицательно", errCfgHeader)
+		return nil, fmt.Errorf("%s: количество попыток сделать запись в хранилище должно быть положительным", errCfgHeader)
 	}
 	if cfg.DeletionBatchSize <= 0 {
-		return nil, fmt.Errorf("%s: размер батча удаляемых за раз записей должен быть неотрицательным", errCfgHeader)
+		return nil, fmt.Errorf("%s: размер батча удаляемых за раз записей должен быть положительным", errCfgHeader)
 	}
 
 	log := cfg.Logger
@@ -189,7 +189,7 @@ func (s *Shortener) CleanUp() {
 	}
 }
 
-// generateTokens генериурет num различных base62-токенов,
+// generateTokens генерирует num различных base62-токенов,
 // длина каждого из которых лежит в отрезке
 // [config.MinTokenLength, config.MахTokenLength]
 func (s *Shortener) generateTokens(num int) ([]string, error) {
@@ -319,7 +319,7 @@ func (s *Shortener) BatchStore(ctx context.Context, req model.BatchShortenReq, u
 	// batch вводится для внутреннего представления
 	// и обработки содержимого входного пакета в методах сервиса и хранилища
 	batch := repository.NewStoreBatch(req)
-	// В stored накапливаем успешно сохраненные в БД элеметны batch
+	// В stored накапливаем успешно сохраненные в БД элементы batch
 	stored := make(repository.StoreBatch, 0, reqLen)
 
 	// Отсчет попыток сохранения до успешной или до достижения лимита попыток
@@ -343,7 +343,7 @@ func (s *Shortener) BatchStore(ctx context.Context, req model.BatchShortenReq, u
 		// Далее до конца блока выполняется err != nil,
 		// поэтому обработка зависит от специфики ошибки
 
-		// Собираем успешно записаные или имевшие конфликт по URL запросы
+		// Собираем успешно записанные или имевшие конфликт по URL запросы
 		stored = appendStoredItems(stored, storageRes)
 
 		if len(stored) == reqLen {
@@ -353,23 +353,23 @@ func (s *Shortener) BatchStore(ctx context.Context, req model.BatchShortenReq, u
 
 		var ett *repository.ErrTokenTaken
 		if errors.As(err, &ett) {
-			// Есть занятыe токены для некоторых записей, возвращенных в storageRes;
+			// Есть занятые токены для некоторых записей, возвращенных в storageRes;
 			// для них предпримем новую попытку генерации токенов и сохранения,
 			// предварительно подготовив данные на итерацию
 			batch = batchForNextAttempt(storageRes)
 			continue
 		}
 
-		// Прочие ошибки от БД отдаем наверх, предварительно предриняв попытку зачистить успешно закоммиченные данные
+		// Прочие ошибки от БД отдаем наверх, предварительно предприняв попытку зачистить успешно закоммиченные данные
 		return model.BatchShortenRes{}, s.restoreWithError(ctx, stored, fmt.Errorf("ошибка сохранения пакета: %w", err))
 	} // for on nAttempts
 
 	return buildBatchShortenRes(stored), nil
 }
 
-// assignTokensToBatch распихивает по пакету req токены из tokens.
+// assignTokensToStoreBatchItems распихивает по пакету req токены из tokens.
 //
-// Модифицирует первый агрумент req.
+// Модифицирует первый аргумент req.
 //
 // Вызывающий код ответственен за то, чтобы в слайсе tokens было
 // достаточно токенов для всех элементов пакета batch
@@ -428,7 +428,7 @@ func buildBatchShortenRes(batch repository.StoreBatch) model.BatchShortenRes {
 
 // restoreWithError пробует удалить данные из батча toRollback из хранилища.
 // В случае успешного удаления возвращает errToReturn.
-// В случае ошибки отката, вовзращает errors.Join ошибки errToReturn и ошибки,
+// В случае ошибки отката, возвращает errors.Join ошибки errToReturn и ошибки,
 // не позволившей выполнить откат.
 func (s *Shortener) restoreWithError(ctx context.Context, toRollback repository.StoreBatch, errToReturn error) error {
 	errs := []error{errToReturn}
@@ -513,14 +513,14 @@ func (s *Shortener) StartItemsDeletionProcessor(ctx context.Context) {
 			defer storageWg.Done()
 
 			if err := s.config.Storage.MarkUserURLsDeleted(ctx, batch); err != nil {
-				s.log.Info("storage error while running batch item deletion query", zap.Error(err))
+				s.log.Error("storage error while running batch item deletion query", zap.Error(err))
 				// Сохраняем в очередь данные, которые не удалось записать
 				s.writeToDeadLetterLog(NewUndeletedItemsFromReqBatch(batch))
 
 				// TODO
 				// Точка расширения:
 				// * ввести единый канал для сбора UndeleteItem;
-				// * вызывавать writeToDeadLetterLog при чтении из канала
+				// * вызывать writeToDeadLetterLog при чтении из канала
 			}
 		}(batchToStore)
 	}
@@ -555,7 +555,7 @@ func (s *Shortener) writeToDeadLetterLog(batch []UndeletedItem) error {
 	// TODO
 	//
 	// По-хорошему, надо бы поднять отдельный канал для накопления ошибок с UndeleteItem,
-	// тогда можно будет обойтись без mutex'а, но за нехваткой времени на отладку соответствующей инфрасруктуры
+	// тогда можно будет обойтись без mutex'а, но за нехваткой времени на отладку соответствующей инфраструктуры
 	// оставляю решение с mutex.
 
 	if s.deadLetterLogFile == nil {
@@ -601,21 +601,21 @@ func (s *Shortener) HandleErrTokenLeftUndeletedAndLogData(err error) error {
 
 	var leftItems []UndeletedItem
 
+	// Нормализуем ошибку в плоский список:
+	// errors.Join возвращает набор ошибок с методом Unwrap() []error,
+	// одиночная ошибка — список из одного элемента.
+	var innerErrs []error
 	if unwrapped, ok := err.(interface{ Unwrap() []error }); ok {
-		// Случай набора ErrTokenLeftUndeleted для разных записей
-		for _, innerErr := range unwrapped.Unwrap() {
-			var target *ErrTokenLeftUndeleted
-			if errors.As(innerErr, &target) {
-				leftItems = append(leftItems, UndeletedItem{
-					Token:  target.Token,
-					UserID: target.UserID,
-				})
-			}
-		}
+		innerErrs = unwrapped.Unwrap()
 	} else {
-		// Случай одной ошибки ErrTokenLeftUndeleted в наборе
+		innerErrs = []error{err}
+	}
+
+	// errors.As по набору останавливается на первом вхождении,
+	// поэтому обходим список циклом и собираем все записи.
+	for _, innerErr := range innerErrs {
 		var target *ErrTokenLeftUndeleted
-		if errors.As(err, &target) {
+		if errors.As(innerErr, &target) {
 			leftItems = append(leftItems, UndeletedItem{
 				Token:  target.Token,
 				UserID: target.UserID,
@@ -628,7 +628,7 @@ func (s *Shortener) HandleErrTokenLeftUndeletedAndLogData(err error) error {
 	// TODO
 	// Точка расширения:
 	// * ввести единый канал для сбора UndeleteItem;
-	// * вызывавать writeToDeadLetterLog при чтении из канала
+	// * вызывать writeToDeadLetterLog при чтении из канала
 }
 
 type UndeletedItem struct {
