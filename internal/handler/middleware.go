@@ -25,7 +25,7 @@ type compressWriter struct {
 	w           http.ResponseWriter
 	zw          *gzip.Writer
 	wroteHeader bool
-	skipGzip    bool // ответ без тела (204, 304): gzip-поток не применяется
+	gzipOn      bool // gzip применён: тело пишется в zw и объявлено заголовком Content-Encoding
 }
 
 func newCompressWriter(w http.ResponseWriter) *compressWriter {
@@ -44,7 +44,12 @@ func (c *compressWriter) Write(p []byte) (int, error) {
 		c.WriteHeader(http.StatusOK)
 	}
 
-	return c.zw.Write(p)
+	// Тело пишем в gzip.Writer только если заголовок Content-Encoding выставлен;
+	// иначе — напрямую в оригинальный writer: ответ остаётся несжатым.
+	if c.gzipOn {
+		return c.zw.Write(p)
+	}
+	return c.w.Write(p)
 }
 
 func (c *compressWriter) WriteHeader(statusCode int) {
@@ -53,22 +58,26 @@ func (c *compressWriter) WriteHeader(statusCode int) {
 	}
 	c.wroteHeader = true
 
+	// Gzip применяется только к успешным ответам с телом (< 300).
 	// Для ответов без тела (204 No Content, 304 Not Modified) gzip не применяется:
 	// закрытие gzip.Writer записало бы в пустой ответ gzip-заголовок и футер.
-	if statusCode == http.StatusNoContent || statusCode == http.StatusNotModified {
-		c.skipGzip = true
-	} else if statusCode < 300 {
+	// Тела ошибок (>= 300) отправляются несжатыми: без заголовка Content-Encoding
+	// клиент читает текст ошибки напрямую, без распаковки.
+	if statusCode != http.StatusNoContent && statusCode != http.StatusNotModified && statusCode < 300 {
+		c.gzipOn = true
 		c.w.Header().Set("Content-Encoding", "gzip")
 	}
 
 	c.w.WriteHeader(statusCode)
 }
 
-// Close закрывает gzip.Writer и досылает все данные из буфера.
+// Close закрывает gzip.Writer и досылает все данные из буфера,
+// если gzip был применён к ответу.
 func (c *compressWriter) Close() error {
-	if c.skipGzip {
-		// Ответ без тела: Close здесь записал бы в w пустой gzip-поток
-		// (заголовок и футер), которого в ответе быть не должно.
+	if !c.gzipOn {
+		// Gzip не применялся (ответ без тела или ошибка): Close здесь
+		// записал бы в w пустой gzip-поток (заголовок и футер),
+		// которого в ответе быть не должно.
 		return nil
 	}
 	return c.zw.Close()
