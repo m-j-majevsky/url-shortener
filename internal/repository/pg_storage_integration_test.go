@@ -152,6 +152,35 @@ func TestPgStorage_Integration_Store_ErrOriginalURLExists(t *testing.T) {
 	// Проверки всех полей в деталях представлены в тестах на моке pgxmock
 }
 
+// Точная копия строки (тот же токен и тот же URL): контракт требует
+// ErrOriginalURLExists (409) с собственным токеном, а не тихий успех.
+// Различение обеспечивает xmax-трюк: у чистой вставки xmax = 0,
+// после DO UPDATE (даже холостого) — идентификатор транзакции.
+// Живая проверка xmax на реальном PostgreSQL.
+func TestPgStorage_Integration_Store_Exact_Copy(t *testing.T) {
+	storage := newIntegrationPgStorage(t)
+	ctx := t.Context()
+
+	tok := "exactTOK"
+	url := "https://exact.copy.ru"
+
+	userID, err := storage.CreateUser(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, storage.Store(ctx, tok, url, userID))
+
+	err = storage.Store(ctx, tok, url, userID)
+	var eoue *ErrOriginalURLExists
+	require.ErrorAs(t, err, &eoue)
+	assert.Equal(t, tok, eoue.StoredToken)
+	assert.Equal(t, url, eoue.URL)
+
+	// Данные не перезаписаны и доступны
+	res, err := storage.Resolve(ctx, tok)
+	require.NoError(t, err)
+	assert.Equal(t, url, res)
+}
+
 func TestPgStorage_Integration_ListUserURLs_Success(t *testing.T) {
 	storage := newIntegrationPgStorage(t)
 	ctx := t.Context()
@@ -165,4 +194,63 @@ func TestPgStorage_Integration_ListUserURLs_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, res, 1)
 	assert.Equal(t, tok, res[0].ShortURL)
+}
+
+// Мягкое удаление, пересохранение удалённого URL и жёсткое удаление.
+// Поведение конфликтов на удалённых строках — это контракт самой БД
+// (ON CONFLICT (original_url) срабатывает и на строке с is_deleted = TRUE),
+// поэтому оно проверяется только интеграционно, на живом PostgreSQL.
+func TestPgStorage_Integration_Deletion_Semantics(t *testing.T) {
+	storage := newIntegrationPgStorage(t)
+	ctx := t.Context()
+
+	userID, err := storage.CreateUser(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, storage.Store(ctx, tok, url, userID))
+
+	// Мягкое удаление
+	require.NoError(t, storage.MarkUserURLsDeleted(ctx, ToMarkDeletedReqBatch{
+		{Token: tok, UserID: userID},
+	}))
+
+	// Resolve удалённого токена даёт 410
+	_, err = storage.Resolve(ctx, tok)
+	var errTID *ErrTokenIsDeleted
+	require.ErrorAs(t, err, &errTID)
+
+	// Листинг не содержит удалённых записей
+	urls, err := storage.ListUserURLs(ctx, userID)
+	require.NoError(t, err)
+	assert.Empty(t, urls)
+
+	// Пересохранение удалённого URL даёт ErrOriginalURLExists со СТАРЫМ токеном (409)
+	err = storage.Store(ctx, anotherTok, url, userID)
+	var eoue *ErrOriginalURLExists
+	require.ErrorAs(t, err, &eoue)
+	assert.Equal(t, tok, eoue.StoredToken)
+	assert.Equal(t, url, eoue.URL)
+
+	// Удалённый токен остаётся занятым: повторное использование — ErrTokenTaken (не 410 и не успех)
+	err = storage.Store(ctx, tok, "https://google.com", userID)
+	var errTT *ErrTokenTaken
+	require.ErrorAs(t, err, &errTT)
+	assert.Equal(t, tok, errTT.Token)
+
+	// Точная копия удалённой строки: тоже конфликт со старым токеном,
+	// а не успех — xmax-трюк отличает её от чистой вставки
+	err = storage.Store(ctx, tok, url, userID)
+	require.ErrorAs(t, err, &eoue)
+	assert.Equal(t, tok, eoue.StoredToken)
+	assert.Equal(t, url, eoue.URL)
+
+	// URL при этом остаётся удалённым: resolve даёт 410
+	_, err = storage.Resolve(ctx, tok)
+	require.ErrorAs(t, err, &errTID)
+
+	// Жёсткое удаление снимает признак мягкого: после него токен даёт 404, а не 410
+	require.NoError(t, storage.DeleteByTokens(ctx, []string{tok}))
+	_, err = storage.Resolve(ctx, tok)
+	var errTNF *ErrTokenNotFound
+	require.ErrorAs(t, err, &errTNF)
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -60,7 +61,7 @@ func (s *pgStorage) Store(ctx context.Context, token, longURL, userID string) er
 			   VALUES ($1, $2, $3)
 			   ON CONFLICT (original_url) DO UPDATE 
 			   SET original_url = EXCLUDED.original_url 
-			   RETURNING token`
+			   RETURNING token, (xmax = 0) AS was_insert`
 
 	var userUIID pgtype.UUID
 	if err := userUIID.Scan(userID); err != nil {
@@ -69,10 +70,11 @@ func (s *pgStorage) Store(ctx context.Context, token, longURL, userID string) er
 
 	var returnedToken string
 	row := s.db.QueryRow(ctx, q, token, longURL, userUIID)
-	if err := row.Scan(&returnedToken); err != nil {
+	var wasInsert bool
+	if err := row.Scan(&returnedToken, &wasInsert); err != nil {
 		// Различаем по коду PG нарушение уникальности и прочие ошибки
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
 			// Сработало ограничение уникальности
 			if strings.ToLower(pgErr.ConstraintName) == "shorten_urls_token_key" {
 				return NewErrTokenTaken(token)
@@ -88,8 +90,10 @@ func (s *pgStorage) Store(ctx context.Context, token, longURL, userID string) er
 
 	// Если мы здесь, значит либо INSERT прошел успешно, либо сработал ON CONFLICT (DO UPDATE)
 	//
-	// Признаком ON CONFLICT считаем отличие returnedToken от item.Token
-	if token != returnedToken {
+	// Признаком ON CONFLICT считаем wasInsert = false
+	// xmax = 0 только у свежевставленной строки;
+	// после DO UPDATE (даже холостого) xmax ненулевой — была перезапись
+	if !wasInsert {
 		return NewErrOriginalURLExists(returnedToken, longURL)
 	}
 
@@ -154,7 +158,7 @@ func (s *pgStorage) BatchStore(ctx context.Context, batchReq StoreBatch, userID 
 					VALUES ($1, $2, $3)
 					ON CONFLICT (original_url) DO UPDATE 
 			        SET original_url = EXCLUDED.original_url 
-					RETURNING token`
+					RETURNING token, (xmax = 0) AS was_insert`
 
 	if _, err = tx.Prepare(ctx, qStoreName, qStore); err != nil {
 		return StoreBatch{}, fmt.Errorf("ошибка подготовки запроса: %w", err)
@@ -169,10 +173,11 @@ func (s *pgStorage) BatchStore(ctx context.Context, batchReq StoreBatch, userID 
 		row := tx.QueryRow(ctx, qStoreName, item.Token, item.OriginalURL, userUIID)
 
 		var returnedToken string
-		if err := row.Scan(&returnedToken); err != nil {
+		var wasInsert bool
+		if err := row.Scan(&returnedToken, &wasInsert); err != nil {
 			// Различаем по коду PG нарушение уникальности shorten_urls_token_key и прочие ошибки
 			var pgErr *pgconn.PgError
-			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
 				// Сработало ограничение уникальности
 				if strings.ToLower(pgErr.ConstraintName) == "shorten_urls_token_key" {
 					item.ConflictedToken = true
@@ -189,8 +194,10 @@ func (s *pgStorage) BatchStore(ctx context.Context, batchReq StoreBatch, userID 
 
 		// Если мы здесь, значит либо INSERT прошел успешно, либо сработал ON CONFLICT (DO UPDATE)
 		//
-		// Признаком ON CONFLICT считаем отличие returnedToken от item.Token
-		if item.Token != returnedToken {
+		// Признаком ON CONFLICT считаем wasInsert = false
+		// xmax = 0 только у свежевставленной строки;
+		// после DO UPDATE (даже холостого) xmax ненулевой — была перезапись
+		if !wasInsert {
 			// Такую запись в батче помечаем для дальнейшей обработки в вызывающем коде
 			item.ConflictedURL = true
 			item.Token = returnedToken
