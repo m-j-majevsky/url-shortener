@@ -43,25 +43,62 @@ const (
 	maxBatchJSONBodyLen = 1 << 20 // массивы в "/api/shorten/batch" и "/api/user/urls": batch-запросы бывают длинными
 )
 
-type URLShortener interface {
+// ---------------------------------------------------------------------------
+// Интерфейсы сервиса.
+// Подробный комментарий к методам см. в '../service/shortner.go'.
+// ---------------------------------------------------------------------------
+
+// ShortURLCreator — сокращение одного URL.
+type ShortURLCreator interface {
 	GenerateAndStore(ctx context.Context, longURL, userID string) (string, error)
+}
+
+// BatchShortURLCreator — пакетное сокращение URL.
+type BatchShortURLCreator interface {
 	BatchStore(ctx context.Context, batch model.BatchShortenReq, userID string) (model.BatchShortenRes, error)
+}
+
+// ShortURLGetter — разворот короткого токена в исходный URL.
+type ShortURLGetter interface {
 	Resolve(ctx context.Context, token string) (string, error)
+}
+
+// UserURLsLister — список сокращённых URL пользователя.
+type UserURLsLister interface {
 	ListUserURLs(ctx context.Context, userID string) (model.UserURLsRes, error)
+}
+
+// UserURLsDeleter — постановка токенов пользователя в очередь на удаление.
+type UserURLsDeleter interface {
 	MarkUserURLsDeleted(ctx context.Context, batch model.TokensToMarkDeleted, userID string) error
 }
 
-type StoragePinger interface {
+// UndeleteFinalizer — добивка истории неудалённых токенов
+// (запросы DELETE /api/user/urls, не поместившиеся в очередь удаления).
+type UndeleteFinalizer interface {
+	HandleErrTokenLeftUndeletedAndLogData(err error) error
+}
+
+// Pinger — проверка доступности хранилища.
+type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
+// Shortener — составной интерфейс сервисного слоя, используемый хендлером.
+type Shortener interface {
+	ShortURLCreator
+	BatchShortURLCreator
+	ShortURLGetter
+	UserURLsLister
+	UserURLsDeleter
+	UndeleteFinalizer
+	Pinger
+}
+
+// UserStorage — регистрация/проверка пользователя для CookieMiddleware.
 type UserStorage interface {
 	CheckUserExists(ctx context.Context, uid string) (bool, error)
 	CreateUser(ctx context.Context) (string, error)
-}
-
-type UndeletedItemsHandler interface {
-	HandleErrTokenLeftUndeletedAndLogData(err error) error
 }
 
 type UserCookieParams struct {
@@ -79,20 +116,18 @@ func NewUserCookieParams(cfg config.ApplicationConfig) UserCookieParams {
 }
 
 type RouterParams struct {
-	Service     URLShortener
-	UserStorage UserStorage   // для CookieMiddleware: регистрация/проверка пользователя
-	Pinger      StoragePinger // необязательный; nil — /ping не обслуживается
+	Service     Shortener
+	UserStorage UserStorage // для CookieMiddleware: регистрация/проверка пользователя
 	Logger      *zap.Logger
 	BaseURL     string
 	UserCookie  UserCookieParams
 	Auditor     audit.Notifier // nil (значение по умолчанию) означает, что аудит отключён.
 }
 
-func NewRouterParams(cfg config.ApplicationConfig, svc URLShortener, us UserStorage, pinger StoragePinger, auditor audit.Notifier, log *zap.Logger) RouterParams {
+func NewRouterParams(cfg config.ApplicationConfig, svc Shortener, us UserStorage, auditor audit.Notifier, log *zap.Logger) RouterParams {
 	return RouterParams{
 		Service:     svc,
 		UserStorage: us,
-		Pinger:      pinger,
 		Logger:      log,
 		BaseURL:     cfg.TargetBaseURL,
 		UserCookie:  NewUserCookieParams(cfg),
@@ -106,13 +141,11 @@ type contextKey string
 const userIDKey contextKey = "user_id"
 
 type Router struct {
-	mux       *chi.Mux
-	service   URLShortener
-	pinger    StoragePinger
-	baseURL   string
-	uiHandler UndeletedItemsHandler
-	auditor   audit.Notifier // рассылка событий аудита; nil — аудит отключён
-	log       *zap.Logger
+	mux     *chi.Mux
+	service Shortener
+	baseURL string
+	auditor audit.Notifier // рассылка событий аудита; nil — аудит отключён
+	log     *zap.Logger
 }
 
 func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -131,7 +164,7 @@ var (
 	badRequestWithMethodNotAllowed = badRequest("недопустимый метод")
 )
 
-func NewRouter(params RouterParams) (*Router, error) {
+func NewRouter(params RouterParams) *Router {
 	log := params.Logger
 	if log == nil {
 		log = zap.NewNop()
@@ -142,21 +175,12 @@ func NewRouter(params RouterParams) (*Router, error) {
 	cr.Use(logger.WithLogging(log))
 	cr.Use(GzipMiddleware)
 
-	us := params.UserStorage
-
-	uih, ok := params.Service.(UndeletedItemsHandler)
-	if !ok {
-		return nil, fmt.Errorf("сервис не поддерживает интерфейс UndeletedItemsHandler")
-	}
-
 	mux := &Router{
-		mux:       cr,
-		service:   params.Service,
-		pinger:    params.Pinger,
-		baseURL:   params.BaseURL,
-		uiHandler: uih,
-		auditor:   params.Auditor,
-		log:       log,
+		mux:     cr,
+		service: params.Service,
+		baseURL: params.BaseURL,
+		auditor: params.Auditor,
+		log:     log,
 	}
 
 	// Текстовый API
@@ -164,7 +188,7 @@ func NewRouter(params RouterParams) (*Router, error) {
 		r.Use(func(next http.Handler) http.Handler {
 			return responseContentTypeMiddleware(next, TextPlain)
 		})
-		r.Use(CookieMiddleware(mux.log, us, params.UserCookie))
+		r.Use(CookieMiddleware(mux.log, params.UserStorage, params.UserCookie))
 
 		r.Post("/", mux.shortenLongURLForText)
 	})
@@ -174,7 +198,7 @@ func NewRouter(params RouterParams) (*Router, error) {
 		r.Use(func(next http.Handler) http.Handler {
 			return responseContentTypeMiddleware(next, AppJSON)
 		})
-		r.Use(CookieMiddleware(mux.log, us, params.UserCookie))
+		r.Use(CookieMiddleware(mux.log, params.UserStorage, params.UserCookie))
 
 		r.Route("/user/urls", func(rr chi.Router) {
 			rr.Get("/", mux.getUserURLs)
@@ -187,18 +211,13 @@ func NewRouter(params RouterParams) (*Router, error) {
 
 	cr.Get("/{token}", mux.resolveShortURL)
 
-	if mux.pinger != nil {
-		mux.log.Info("service supports request for " + pingPath)
-		cr.Get(pingPath, mux.pingDB)
-	} else {
-		mux.log.Info("service doesn't support request for " + pingPath)
-		cr.Get(pingPath, badRequestWithWrongPath)
-	}
+	mux.log.Info("service supports request for " + pingPath)
+	cr.Get(pingPath, mux.pingDB)
 
 	cr.NotFound(badRequestWithWrongPath)
 	cr.MethodNotAllowed(badRequestWithMethodNotAllowed)
 
-	return mux, nil
+	return mux
 }
 
 // getUserIDFromContext извлекает ID пользователя из контекста запроса.
@@ -229,16 +248,10 @@ func (rt *Router) notifyAudit(action, userID, url string) {
 // Путь "/ping", GET
 
 func (rt *Router) pingDB(w http.ResponseWriter, r *http.Request) {
-	if rt.pinger == nil {
-		rt.log.Error("ping storage is not supported")
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(r.Context(), procTimeout)
 	defer cancel()
 
-	err := rt.pinger.Ping(ctx)
+	err := rt.service.Ping(ctx)
 	if err != nil {
 		rt.log.Error("database ping failed", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -580,7 +593,7 @@ func (rt *Router) markUserURLsDeleted(w http.ResponseWriter, r *http.Request) {
 		rt.log.Debug("error while deleting data", zap.Error(err))
 
 		// Добавляем в лог неудаленные записи во избежание потери запросов
-		loggingErr := rt.uiHandler.HandleErrTokenLeftUndeletedAndLogData(err)
+		loggingErr := rt.service.HandleErrTokenLeftUndeletedAndLogData(err)
 		if loggingErr != nil {
 			rt.log.Error("error while logging undeleted items", zap.Error(loggingErr), zap.String("event", "critical error"))
 		}
