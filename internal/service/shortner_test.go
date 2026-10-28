@@ -189,10 +189,10 @@ func (s *ShortenerSuite) TestGenerateTokens_RetryOnLengthMismatch_WithFixedProvi
 
 type FailingReader struct{}
 
-var FailingReaderErr = errors.New("ошибка провайдера")
+var ErrFailingReader = errors.New("ошибка провайдера")
 
 func (FailingReader) Read([]byte) (int, error) {
-	return 0, FailingReaderErr
+	return 0, ErrFailingReader
 }
 
 func (s *ShortenerSuite) TestGenerateRandomBytes_ErrorWhenProviderFails() {
@@ -204,9 +204,8 @@ func (s *ShortenerSuite) TestGenerateRandomBytes_ErrorWhenProviderFails() {
 	_, err = svc.generateTokens(1)
 	s.Error(err)
 	s.Contains(err.Error(), "ошибка генерации случайного токена")
-	s.ErrorIs(err, FailingReaderErr)
+	s.ErrorIs(err, ErrFailingReader)
 }
-
 
 // Resolve
 
