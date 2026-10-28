@@ -104,12 +104,14 @@ type UserRegistrator interface {
 	CreateUser(ctx context.Context) (string, error)
 }
 
+// UserCookieParams — параметры cookie аутентификации: имя, время жизни, ключ подписи JWT.
 type UserCookieParams struct {
 	UserCookieName string
 	UserCookieTTL  time.Duration
 	SigningKey     []byte
 }
 
+// NewUserCookieParams собирает параметры cookie из конфигурации приложения.
 func NewUserCookieParams(cfg config.ApplicationConfig) UserCookieParams {
 	return UserCookieParams{
 		UserCookieName: cfg.CookieUserIDName,
@@ -118,6 +120,7 @@ func NewUserCookieParams(cfg config.ApplicationConfig) UserCookieParams {
 	}
 }
 
+// RouterParams — параметры сборки роутера; заполняется NewRouterParams.
 type RouterParams struct {
 	Service    Shortener
 	Logger     *zap.Logger
@@ -126,6 +129,7 @@ type RouterParams struct {
 	Auditor    audit.Notifier // nil (значение по умолчанию) означает, что аудит отключён.
 }
 
+// NewRouterParams формирует RouterParams из конфигурации, сервиса, аудитора и логгера.
 func NewRouterParams(cfg config.ApplicationConfig, svc Shortener, auditor audit.Notifier, log *zap.Logger) RouterParams {
 	return RouterParams{
 		Service:    svc,
@@ -141,6 +145,8 @@ type contextKey string
 // userIDKey — ключ, под которым ID пользователя хранится в контексте запроса.
 const userIDKey contextKey = "user_id"
 
+// Router — HTTP-роутер сервиса: chi-маршруты, middleware и хендлеры.
+// Реализует http.Handler; конфигурируется через RouterParams.
 type Router struct {
 	mux     *chi.Mux
 	service Shortener
@@ -149,6 +155,7 @@ type Router struct {
 	log     *zap.Logger
 }
 
+// ServeHTTP реализует http.Handler: обработка запроса передаётся chi-маршрутизатору.
 func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rt.mux.ServeHTTP(w, r)
 }
@@ -165,6 +172,8 @@ var (
 	badRequestWithMethodNotAllowed = badRequest("недопустимый метод")
 )
 
+// NewRouter собирает роутер: middleware логирования и gzip, группа защищённых
+// cookie эндпоинтов (текстовый и JSON API), публичные resolve и ping.
 func NewRouter(params RouterParams) *Router {
 	log := params.Logger
 	if log == nil {

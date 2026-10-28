@@ -30,30 +30,35 @@ type (
 
 // Методы ErrTokenNotFound
 
+// NewErrTokenNotFound создаёт ошибку ненайденного токена.
 func NewErrTokenNotFound(tok string) error {
 	return &ErrTokenNotFound{
 		Token: tok,
 	}
 }
 
+// Error реализует интерфейс error.
 func (e *ErrTokenNotFound) Error() string {
 	return fmt.Sprintf("токен %s не найден", e.Token)
 }
 
 // Методы ErrTokenIsDeleted
 
+// NewErrTokenIsDeleted создаёт ошибку удалённого токена.
 func NewErrTokenIsDeleted(tok string) error {
 	return &ErrTokenIsDeleted{
 		Token: tok,
 	}
 }
 
+// Error реализует интерфейс error.
 func (e *ErrTokenIsDeleted) Error() string {
 	return fmt.Sprintf("токен %s удален", e.Token)
 }
 
 // Методы ErrOriginalURLExists
 
+// NewErrOriginalURLExists создаёт ошибку конфликта: URL уже сохранён под StoredToken.
 func NewErrOriginalURLExists(token, url string) error {
 	return &ErrOriginalURLExists{
 		StoredToken: token,
@@ -61,6 +66,7 @@ func NewErrOriginalURLExists(token, url string) error {
 	}
 }
 
+// Error реализует интерфейс error.
 func (e *ErrOriginalURLExists) Error() string {
 	return fmt.Sprintf("URL %s сохранен под токеном %s", e.URL, e.StoredToken)
 }

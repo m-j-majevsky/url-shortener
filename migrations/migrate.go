@@ -1,4 +1,4 @@
-// Идея реализация подсмотрена у Рафаэля Мустафина
+// Идея реализации подсмотрена у Рафаэля Мустафина
 // https://github.com/Bazys/practicum-webinars/blob/master/videos/migrate.go
 
 package migrations
@@ -27,7 +27,7 @@ var migrations embed.FS
 func RunMigrations(_ context.Context, dsn string) error {
 	src, err := iofs.New(migrations, ".")
 	if err != nil {
-		return fmt.Errorf("ошибка доступа к источнику даннах миграции: %w", err)
+		return fmt.Errorf("ошибка доступа к источнику данных миграции: %w", err)
 	}
 
 	// Очищаем DSN от лишних фильтров

@@ -5,6 +5,8 @@ import (
 )
 
 type (
+	// StoreItem — элемент пакета на сохранение: (токен, URL, пользователь)
+	// и признаки конфликтов (ConflictedToken, ConflictedURL).
 	StoreItem struct {
 		CorrelationID   string
 		Token           string
@@ -13,13 +15,16 @@ type (
 		ConflictedURL   bool
 	}
 
+	// StoreBatch — пакет на сохранение.
 	StoreBatch []StoreItem
 
+	// ToMarkDeletedReqItem — запрос на мягкое удаление токена от имени пользователя.
 	ToMarkDeletedReqItem struct {
 		Token  string
 		UserID string
 	}
 
+	// ToMarkDeletedReqBatch — пакет запросов на мягкое удаление.
 	ToMarkDeletedReqBatch []ToMarkDeletedReqItem
 
 	// UserURL — запись о коротком URL пользователя.
@@ -35,6 +40,8 @@ type (
 // Методы и утилиты для работы с StoreBatch
 
 
+// MayBeAddErrors собирает признаки конфликтов пакета (занятые токены,
+// уже существующие URL) в один joined error.
 func MayBeAddErrors(batch StoreBatch) (StoreBatch, error) {
 	errs := make([]error, 0, len(batch))
 

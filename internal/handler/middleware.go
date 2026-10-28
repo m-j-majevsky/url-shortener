@@ -12,6 +12,8 @@ import (
 	"go.uber.org/zap"
 )
 
+// responseContentTypeMiddleware устанавливает заголовок Content-Type ответа:
+// текстовый API отвечает text/plain, JSON API — application/json.
 func responseContentTypeMiddleware(next http.Handler, ct string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(ContentType, ct)
@@ -28,6 +30,7 @@ type compressWriter struct {
 	gzipOn      bool // gzip применён: тело пишется в zw и объявлено заголовком Content-Encoding
 }
 
+// newCompressWriter оборачивает http.ResponseWriter в сжимающую обёртку.
 func newCompressWriter(w http.ResponseWriter) *compressWriter {
 	return &compressWriter{
 		w:  w,
@@ -35,10 +38,15 @@ func newCompressWriter(w http.ResponseWriter) *compressWriter {
 	}
 }
 
+// Header делегирует заголовки оригинальному writer'у, чтобы хендлеры
+// видели и меняли общую таблицу заголовков ответа.
 func (c *compressWriter) Header() http.Header {
 	return c.w.Header()
 }
 
+// Write пишет тело в gzip.Writer, если gzip применён (gzipOn),
+// иначе — напрямую в оригинальный writer. При первом вызове
+// неявно отправляет заголовок ответа (по умолчанию 200 OK).
 func (c *compressWriter) Write(p []byte) (int, error) {
 	if !c.wroteHeader {
 		c.WriteHeader(http.StatusOK)
@@ -52,6 +60,9 @@ func (c *compressWriter) Write(p []byte) (int, error) {
 	return c.w.Write(p)
 }
 
+// WriteHeader отправляет код ответа и при необходимости включает gzip:
+// заголовок Content-Encoding выставляется только для успешных ответов
+// с телом; у 204/304 и ошибок тело уходит несжатым.
 func (c *compressWriter) WriteHeader(statusCode int) {
 	if c.wroteHeader {
 		return
@@ -90,6 +101,8 @@ type compressReader struct {
 	zr *gzip.Reader
 }
 
+// newCompressReader оборачивает тело запроса в распаковывающую обёртку.
+// Возвращает ошибку, если тело клиента не является корректным gzip-потоком.
 func newCompressReader(r io.ReadCloser) (*compressReader, error) {
 	zr, err := gzip.NewReader(r)
 	if err != nil {
@@ -102,10 +115,12 @@ func newCompressReader(r io.ReadCloser) (*compressReader, error) {
 	}, nil
 }
 
+// Read читает распакованные данные из gzip.Reader.
 func (c *compressReader) Read(p []byte) (n int, err error) {
 	return c.zr.Read(p)
 }
 
+// Close закрывает gzip.Reader и исходное тело запроса.
 func (c *compressReader) Close() error {
 	if err := c.r.Close(); err != nil {
 		return err
@@ -113,6 +128,9 @@ func (c *compressReader) Close() error {
 	return c.zr.Close()
 }
 
+// GzipMiddleware прозрачно сжимает ответы и распаковывает запросы.
+// Действует только для запросов с Content-Type text/plain или application/json:
+// для прочих тело запроса не декомпрессируется, а ответы уходят без сжатия.
 func GzipMiddleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// middleware используется только для разрешенных значений Content-Type запроса
@@ -159,12 +177,17 @@ func GzipMiddleware(h http.Handler) http.Handler {
 	})
 }
 
+// isValidRequestContentType проверяет, поддерживается ли Content-Type запроса
+// middleware сжатия.
 func isValidRequestContentType(ct string) bool {
 	return ct == TextPlain || ct == AppJSON
 }
 
 // Функциональность установки-извлечения cookie с ID пользователя
 
+// CookieMiddleware возвращает middleware аутентификации по cookie с ID пользователя.
+// При отсутствии или невалидности cookie создаёт нового пользователя через
+// UserRegistrator и ставит cookie с JWT; валидная cookie с пустым ID — 401.
 func CookieMiddleware(log *zap.Logger, users UserRegistrator, params UserCookieParams) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -13,7 +13,7 @@ type RandomByteProvider interface {
 // Запрашивает у провайдера ровно n байт.
 func GenerateRandomBytes(provider RandomByteProvider, n int) ([]byte, error) {
 	if n <= 0 {
-		return nil, errors.New("запрашиваемая длина последовательности должна быть неотрицательной")
+		return nil, errors.New("запрашиваемая длина последовательности должна быть положительной")
 	}
 	b := make([]byte, n)
 	if _, err := io.ReadFull(provider, b); err != nil {

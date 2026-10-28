@@ -1,3 +1,6 @@
+// Package service реализует бизнес-логику сокращения URL поверх хранилища:
+// генерацию токенов, разрешение конфликтов, пакетные операции
+// и асинхронный процессор удаления токенов.
 package service
 
 import (
@@ -90,6 +93,8 @@ type Storage interface {
 	StoragePinger
 }
 
+// ShortenerConfig — конфигурация сервиса. Собирается DefaultShortenerConfig
+// с последующей установкой хранилища; валидируется NewShortener.
 type ShortenerConfig struct {
 	Storage Storage
 
@@ -111,6 +116,8 @@ type ShortenerConfig struct {
 	Logger *zap.Logger // логгер; если nil — используется no-op
 }
 
+// DefaultShortenerConfig возвращает конфигурацию со значениями по умолчанию.
+// Storage не устанавливается — его задаёт вызывающий код.
 func DefaultShortenerConfig() ShortenerConfig {
 	return ShortenerConfig{
 		// Storage не устанавливается!
@@ -126,6 +133,8 @@ func DefaultShortenerConfig() ShortenerConfig {
 	}
 }
 
+// Shortener — реализация сервисного слоя: фасад над хранилищем
+// с генерацией токенов и асинхронной очередью удалений.
 type Shortener struct {
 	config                 ShortenerConfig
 	deletionQueue          chan repository.ToMarkDeletedReqItem
@@ -139,6 +148,8 @@ type Shortener struct {
 
 const errCfgHeader = "ошибка конфигурации сервиса"
 
+// NewShortener валидирует конфигурацию и создаёт сервис. Возвращает ошибку,
+// если обязательные поля не заданы или числовые границы не положительны.
 func NewShortener(cfg ShortenerConfig) (*Shortener, error) {
 	if cfg.Storage == nil {
 		return nil, fmt.Errorf("%s: не задано хранилище", errCfgHeader)
@@ -199,6 +210,8 @@ func (s *Shortener) StopItemsDeletionProcessor() {
 	}
 }
 
+// CleanUp закрывает dead-letter-файл и обнуляет его дескриптор.
+// Повторная запись возможна: writeToDeadLetterLog переоткроет файл.
 func (s *Shortener) CleanUp() {
 	s.deadLetterLogFileMutex.Lock()
 	defer s.deadLetterLogFileMutex.Unlock()
@@ -251,6 +264,9 @@ func (s *Shortener) generateTokens(num int) ([]string, error) {
 	return result, nil
 }
 
+// GenerateAndStore генерирует токен и сохраняет URL с ретраями по занятым токенам.
+// Если URL уже сохранён, возвращает старый токен и ErrOriginalURLExists;
+// прочие ошибки хранилища — наверх; при исчерпании попыток — ошибка с их числом.
 func (s *Shortener) GenerateAndStore(ctx context.Context, longURL, userID string) (string, error) {
 	for i := 0; i < s.config.MaxStoringAttempts; i++ {
 		tokens, err := s.generateTokens(1)
@@ -258,7 +274,7 @@ func (s *Shortener) GenerateAndStore(ctx context.Context, longURL, userID string
 			// Ошибка библиотечного генератора, контекста,
 			// или не удалось выполнить ограничения на токен из конфига
 			//
-			// Ошибку дополнительно не оборачиваю, т.к. все обертки сделаны в GenerateToken
+			// Ошибку дополнительно не оборачиваю, т.к. все обертки сделаны в GenerateAndStore
 			return "", err
 		}
 
@@ -290,6 +306,8 @@ func (s *Shortener) GenerateAndStore(ctx context.Context, longURL, userID string
 	return "", fmt.Errorf("не удалось сохранить URL за %d попыток", s.config.MaxStoringAttempts)
 }
 
+// Resolve разворачивает токен в исходный URL, транслируя ошибки хранилища
+// в ошибки сервиса: ErrTokenNotFound, ErrTokenIsDeleted.
 func (s *Shortener) Resolve(ctx context.Context, token string) (string, error) {
 	url, err := s.config.Storage.Resolve(ctx, token)
 	if err != nil {
@@ -308,6 +326,7 @@ func (s *Shortener) Resolve(ctx context.Context, token string) (string, error) {
 	return url, nil
 }
 
+// Ping проверяет доступность хранилища.
 func (s *Shortener) Ping(ctx context.Context) error {
 	return s.config.Storage.Ping(ctx)
 }
@@ -330,6 +349,10 @@ func (s *Shortener) CreateUser(ctx context.Context) (string, error) {
 	return uid, nil
 }
 
+// BatchStore сохраняет пакет URL с ретраями занятых токенов. При исчерпании
+// MaxStoringAttempts коммит откатывается (restoreWithError) и возвращается
+// ошибка с числом несохранённых URL; иначе — результат с признаками ConflictedURL
+// для уже существовавших записей.
 func (s *Shortener) BatchStore(ctx context.Context, req model.BatchShortenReq, userID string) (model.BatchShortenRes, error) {
 	reqLen := len(req)
 	if reqLen == 0 {
@@ -536,6 +559,8 @@ func (s *Shortener) MarkUserURLsDeleted(ctx context.Context, batch model.TokensT
 	return s.putInDeletionQueue(req)
 }
 
+// putInDeletionQueue помещает пакет в очередь удалений; при переполнении
+// очереди или её закрытии элементы получают ErrTokenLeftUndeleted.
 func (s *Shortener) putInDeletionQueue(batch repository.ToMarkDeletedReqBatch) error {
 	s.deletionQueueMutex.RLock()
 	defer s.deletionQueueMutex.RUnlock()
@@ -563,6 +588,9 @@ func (s *Shortener) putInDeletionQueue(batch repository.ToMarkDeletedReqBatch) e
 	return errors.Join(errs...)
 }
 
+// StartItemsDeletionProcessor запускает горутину-процессор удалений:
+// накапливает батч до DeletionBatchSize или таймаута и передаёт в хранилище.
+// Блокируется до завершения; останов — по отмене контекста.
 func (s *Shortener) StartItemsDeletionProcessor(ctx context.Context) {
 	batch := make(repository.ToMarkDeletedReqBatch, 0, s.config.DeletionBatchSize)
 	ticker := time.NewTicker(s.config.DeletionQueueFlushTimeout)
@@ -623,6 +651,8 @@ func (s *Shortener) StartItemsDeletionProcessor(ctx context.Context) {
 	}
 }
 
+// writeToDeadLetterLog дозаписывает потерянные записи в dead-letter-файл,
+// открывая его при необходимости; закрывается CleanUp.
 func (s *Shortener) writeToDeadLetterLog(batch []UndeletedItem) error {
 	s.deadLetterLogFileMutex.Lock()
 	defer s.deadLetterLogFileMutex.Unlock()
@@ -653,15 +683,18 @@ func (s *Shortener) writeToDeadLetterLog(batch []UndeletedItem) error {
 	return nil
 }
 
+// ErrTokenLeftUndeleted — токен пользователя не попал в очередь на удаление.
 type ErrTokenLeftUndeleted struct {
 	Token  string
 	UserID string
 }
 
+// Error реализует интерфейс error.
 func (e *ErrTokenLeftUndeleted) Error() string {
 	return fmt.Sprintf("токен %v пользователя %v не был добавлен в очередь на удаление", e.Token, e.UserID)
 }
 
+// NewErrTokenLeftUndeleted создаёт ошибку для потерянной пары (токен, пользователь).
 func NewErrTokenLeftUndeleted(token, userID string) error {
 	return &ErrTokenLeftUndeleted{
 		Token:  token,
@@ -669,6 +702,8 @@ func NewErrTokenLeftUndeleted(token, userID string) error {
 	}
 }
 
+// HandleErrTokenLeftUndeletedAndLogData собирает из ошибки все ErrTokenLeftUndeleted
+// и дозаписывает их в dead-letter-файл.
 func (s *Shortener) HandleErrTokenLeftUndeletedAndLogData(err error) error {
 	if err == nil {
 		return nil
@@ -706,12 +741,16 @@ func (s *Shortener) HandleErrTokenLeftUndeletedAndLogData(err error) error {
 	// * вызывать writeToDeadLetterLog при чтении из канала
 }
 
+// UndeletedItem — запись dead-letter-лога: пара (токен, пользователь)
+// и момент, когда она была отброшена.
 type UndeletedItem struct {
 	Token     string    `json:"token"`
 	UserID    string    `json:"user_id"`
 	Discarded time.Time `json:"discarded_at,omitzero"`
 }
 
+// NewUndeletedItemsFromReqBatch конвертирует пакет запросов на удаление
+// в записи dead-letter-лога.
 func NewUndeletedItemsFromReqBatch(batch repository.ToMarkDeletedReqBatch) []UndeletedItem {
 	res := make([]UndeletedItem, 0, len(batch))
 

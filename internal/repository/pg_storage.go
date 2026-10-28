@@ -1,3 +1,5 @@
+// Package repository реализует хранилища сервиса: PostgreSQL на pgx v5
+// и локальное in-memory с сохранением состояния в файл.
 package repository
 
 import (
@@ -48,6 +50,9 @@ func NewPgStorage(db dbtx) *pgStorage {
 	}
 }
 
+// Store сохраняет (токен, URL, пользователь). Конфликт по original_url возвращает
+// ErrOriginalURLExists со старым токеном (в том числе для удалённых записей),
+// по токену — ErrTokenTaken.
 func (s *pgStorage) Store(ctx context.Context, token, longURL, userID string) error {
 	// Важно: ON CONFLICT срабатывает _только_ для original_url.
 	// Конфликты по token будут падать в ошибку, которую мы обработаем ниже.
@@ -91,6 +96,8 @@ func (s *pgStorage) Store(ctx context.Context, token, longURL, userID string) er
 	return nil
 }
 
+// Resolve возвращает URL по токену: удалённый — ErrTokenIsDeleted,
+// несуществующий — ErrTokenNotFound.
 func (s *pgStorage) Resolve(ctx context.Context, token string) (string, error) {
 	const q = `SELECT original_url, is_deleted
 	           FROM shorten_urls
@@ -115,12 +122,13 @@ func (s *pgStorage) Resolve(ctx context.Context, token string) (string, error) {
 	return url, nil
 }
 
+// Ping проверяет доступность БД.
 func (s *pgStorage) Ping(ctx context.Context) error {
 	return s.db.Ping(ctx)
 }
 
 // Важно:
-// Гарантировать уникальность StoreBatch.Token среди элемемнов параметра batch,
+// Гарантировать уникальность StoreBatch.Token среди элементов параметра batch,
 // это ответственность вызывающего кода!
 func (s *pgStorage) BatchStore(ctx context.Context, batchReq StoreBatch, userID string) (StoreBatch, error) {
 	if len(batchReq) == 0 {
@@ -196,6 +204,7 @@ func (s *pgStorage) BatchStore(ctx context.Context, batchReq StoreBatch, userID 
 	return MayBeAddErrors(batchRes)
 }
 
+// DeleteByTokens жёстко удаляет записи по токенам в одной транзакции.
 func (s *pgStorage) DeleteByTokens(ctx context.Context, tokens []string) error {
 	if len(tokens) == 0 {
 		return nil
@@ -227,6 +236,7 @@ func (s *pgStorage) DeleteByTokens(ctx context.Context, tokens []string) error {
 	return nil
 }
 
+// CheckUserExists проверяет существование пользователя по ID.
 func (s *pgStorage) CheckUserExists(ctx context.Context, userID string) (exists bool, err error) {
 	const q = `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)`
 
@@ -243,6 +253,7 @@ func (s *pgStorage) CheckUserExists(ctx context.Context, userID string) (exists 
 	return exists, nil
 }
 
+// CreateUser регистрирует пользователя и возвращает его UUID.
 func (s *pgStorage) CreateUser(ctx context.Context) (string, error) {
 	const q = `INSERT INTO users DEFAULT VALUES RETURNING id`
 
@@ -254,6 +265,7 @@ func (s *pgStorage) CreateUser(ctx context.Context) (string, error) {
 	return id.String(), nil
 }
 
+// ListUserURLs возвращает не удалённые URL пользователя.
 func (s *pgStorage) ListUserURLs(ctx context.Context, userID string) (UserURLs, error) {
 	const q = `SELECT token, original_url
                FROM shorten_urls
@@ -278,6 +290,7 @@ func (s *pgStorage) ListUserURLs(ctx context.Context, userID string) (UserURLs, 
 	return userURLs, nil
 }
 
+// MarkUserURLsDeleted помечает токены пользователя удалёнными (is_deleted = TRUE).
 func (s *pgStorage) MarkUserURLsDeleted(ctx context.Context, batch ToMarkDeletedReqBatch) error {
 	if len(batch) == 0 {
 		return nil

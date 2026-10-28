@@ -109,7 +109,7 @@ func readApplicationConfig() (ApplicationConfig, error) {
 
 	// SAVE_STATE_INTERVAL — единственный параметр, требующий интерпретации
 	// на слое чтения (time.ParseDuration), поэтому read-слой здесь
-	// возвращает ошибку. В gophermart read-слой ошибок не возвращает.
+	// возвращает ошибку.
 	if envTickPeriod := envOr("SAVE_STATE_INTERVAL", ""); envTickPeriod != "" {
 		ssp, err := time.ParseDuration(envTickPeriod)
 		if err != nil {

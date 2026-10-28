@@ -12,8 +12,10 @@ import (
 )
 
 type (
+	// TokenToURL — отображение токена в исходный URL.
 	TokenToURL map[string]string
 
+	// UserToTokens — отображение пользователя в список его токенов.
 	UserToTokens map[string][]string
 
 	// DeletedTokens — множество токенов, помеченных удалёнными.
@@ -21,6 +23,7 @@ type (
 	// повторное сохранение того же URL даёт конфликт со старым токеном.
 	DeletedTokens map[string]bool
 
+	// LocalStorage — хранилище в памяти с сохранением состояния в файл.
 	LocalStorage struct {
 		mu sync.Mutex
 
@@ -40,14 +43,17 @@ type (
 	storageRepr []itemRepr
 )
 
+// newTokenToURL создаёт пустую карту токен -> URL.
 func newTokenToURL() TokenToURL {
 	return make(map[string]string)
 }
 
+// newUserToTokens создаёт пустую карту пользователь -> токены.
 func newUserToTokens() UserToTokens {
 	return make(map[string][]string)
 }
 
+// NewLocalStorage создаёт пустое локальное хранилище.
 func NewLocalStorage() *LocalStorage {
 	return &LocalStorage{
 		data:    newTokenToURL(),
@@ -56,6 +62,7 @@ func NewLocalStorage() *LocalStorage {
 	}
 }
 
+// exportRepr сериализует состояние хранилища для записи в файл.
 func (s *LocalStorage) exportRepr() storageRepr {
 	result := make(storageRepr, len(s.data))
 	idx := 1
@@ -108,6 +115,7 @@ func (s *LocalStorage) SaveToFile(path string) error {
 	return nil
 }
 
+// importRepr перезаписывает состояние данными из файла; вызывается под s.mu.
 func (s *LocalStorage) importRepr(repr storageRepr) {
 	s.data = make(TokenToURL, len(repr))
 	// Перезапись состояния сбрасывает признаки удаления (аналог is_deleted)
@@ -126,6 +134,7 @@ func (s *LocalStorage) importRepr(repr storageRepr) {
 	}
 }
 
+// addTokenToUser добавляет токен в список пользователя.
 func (s *LocalStorage) addTokenToUser(tok, uid string) {
 	// Вызывается в контексте уже захваченного s.mu
 	// или при загрузке данных из файла, когда захват не имеет смысла
@@ -148,6 +157,7 @@ func (s *LocalStorage) addTokenToUser(tok, uid string) {
 	s.users[uid] = append(s.users[uid], tok)
 }
 
+// deleteTokenFromUsers убирает токен из списков всех пользователей.
 func (s *LocalStorage) deleteTokenFromUsers(token string) {
 	// Вызывается в контексте уже захваченного s.mu
 
@@ -156,6 +166,7 @@ func (s *LocalStorage) deleteTokenFromUsers(token string) {
 	}
 }
 
+// deleteUsersToken убирает токен из списка конкретного пользователя.
 func (s *LocalStorage) deleteUsersToken(userID, tok string) {
 	// Вызывается в контексте уже захваченного s.mu
 
@@ -173,6 +184,7 @@ func (s *LocalStorage) deleteUsersToken(userID, tok string) {
 	}
 }
 
+// isTokenBelongsToUser проверяет принадлежность токена пользователю.
 func (s *LocalStorage) isTokenBelongsToUser(tok, userID string) bool {
 	// Вызывается в контексте уже захваченного s.mu
 
@@ -216,7 +228,7 @@ func (s *LocalStorage) Store(_ context.Context, token, longURL, userID string) e
 	defer s.mu.Unlock()
 
 	// Для проверки нарушения уникальности longURL ограничусь перебором сохраненных значений,
-	// чтобы не возиться с введение дополнительного индекса (мыпы longURL -> token)
+	// чтобы не возиться с введением дополнительного индекса (мапа longURL -> token)
 	// или другого более эффективного механизма
 	for tok, url := range s.data {
 		if url == longURL {
@@ -234,6 +246,8 @@ func (s *LocalStorage) Store(_ context.Context, token, longURL, userID string) e
 	return nil
 }
 
+// Resolve возвращает URL по токену: удалённый — ErrTokenIsDeleted,
+// несуществующий — ErrTokenNotFound.
 func (s *LocalStorage) Resolve(_ context.Context, token string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -253,8 +267,8 @@ func (s *LocalStorage) Resolve(_ context.Context, token string) (string, error) 
 }
 
 // Важно:
-// Гарантировать уникальность StoreBatch.Token среди элемемнов параметра batch,
-// а также гарантировать остутствие пустых StoreBatch.Token или StoreBatch.OriginalURL,
+// Гарантировать уникальность StoreBatch.Token среди элементов параметра batch,
+// а также гарантировать отсутствие пустых StoreBatch.Token или StoreBatch.OriginalURL,
 // это ответственность вызывающего кода!
 func (s *LocalStorage) BatchStore(_ context.Context, batch StoreBatch, userID string) (StoreBatch, error) {
 	result := make(StoreBatch, len(batch))
@@ -299,6 +313,7 @@ func (s *LocalStorage) BatchStore(_ context.Context, batch StoreBatch, userID st
 	return MayBeAddErrors(result)
 }
 
+// DeleteByTokens жёстко удаляет записи по токенам.
 func (s *LocalStorage) DeleteByTokens(_ context.Context, tokens []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -314,6 +329,7 @@ func (s *LocalStorage) DeleteByTokens(_ context.Context, tokens []string) error 
 	return nil
 }
 
+// CheckUserExists проверяет существование пользователя по ID.
 func (s *LocalStorage) CheckUserExists(_ context.Context, uid string) (exists bool, err error) {
 	if uid == "" {
 		return false, nil
@@ -326,6 +342,7 @@ func (s *LocalStorage) CheckUserExists(_ context.Context, uid string) (exists bo
 	return exists, nil
 }
 
+// CreateUser регистрирует пользователя с UUID и возвращает его ID.
 func (s *LocalStorage) CreateUser(_ context.Context) (uid string, err error) {
 	uid = uuid.New().String()
 
@@ -337,6 +354,7 @@ func (s *LocalStorage) CreateUser(_ context.Context) (uid string, err error) {
 	return uid, nil
 }
 
+// ListUserURLs возвращает не удалённые URL пользователя.
 func (s *LocalStorage) ListUserURLs(_ context.Context, userID string) (UserURLs, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -359,6 +377,7 @@ func (s *LocalStorage) ListUserURLs(_ context.Context, userID string) (UserURLs,
 	return res, nil
 }
 
+// MarkUserURLsDeleted помечает токены пользователя удалёнными.
 func (s *LocalStorage) MarkUserURLsDeleted(_ context.Context, batch ToMarkDeletedReqBatch) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
