@@ -68,7 +68,6 @@ type UserCookieParams struct {
 	UserCookieName string
 	UserCookieTTL  time.Duration
 	SigningKey     []byte
-	userIDKey      contextKey
 }
 
 func NewUserCookieParams(cfg config.ApplicationConfig) UserCookieParams {
@@ -103,12 +102,14 @@ func NewRouterParams(cfg config.ApplicationConfig, svc URLShortener, us UserStor
 
 type contextKey string
 
+// userIDKey — ключ, под которым ID пользователя хранится в контексте запроса.
+const userIDKey contextKey = "user_id"
+
 type Router struct {
 	mux       *chi.Mux
 	service   URLShortener
 	pinger    StoragePinger
 	baseURL   string
-	userIDKey contextKey
 	uiHandler UndeletedItemsHandler
 	auditor   audit.Notifier // рассылка событий аудита; nil — аудит отключён
 	log       *zap.Logger
@@ -148,13 +149,11 @@ func NewRouter(params RouterParams) (*Router, error) {
 		return nil, fmt.Errorf("сервис не поддерживает интерфейс UndeletedItemsHandler")
 	}
 
-	params.UserCookie.userIDKey = contextKey(params.UserCookie.UserCookieName)
 	mux := &Router{
 		mux:       cr,
 		service:   params.Service,
 		pinger:    params.Pinger,
 		baseURL:   params.BaseURL,
-		userIDKey: params.UserCookie.userIDKey,
 		uiHandler: uih,
 		auditor:   params.Auditor,
 		log:       log,
@@ -202,12 +201,14 @@ func NewRouter(params RouterParams) (*Router, error) {
 	return mux, nil
 }
 
-func (rt *Router) getUserIDFromContext(ctx context.Context) (val string, err error) {
-	val, found := ctx.Value(rt.userIDKey).(string)
-	if !found {
-		err = fmt.Errorf("ключ %v не найден в вызываемом контексте", rt.userIDKey)
+// getUserIDFromContext извлекает ID пользователя из контекста запроса.
+// Возвращает ID и nil при успехе, или пустую строку и ошибку, если ключ не найден.
+func getUserIDFromContext(ctx context.Context) (string, error) {
+	val, ok := ctx.Value(userIDKey).(string)
+	if !ok {
+		return "", fmt.Errorf("ID пользователя не найден в контексте")
 	}
-	return
+	return val, nil
 }
 
 // notifyAudit формирует событие аудита и отправляет его во все доступные
@@ -294,7 +295,7 @@ func (rt *Router) resolveShortURL(w http.ResponseWriter, r *http.Request) {
 // Путь "/", POST (текстовый api)
 
 func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) {
-	userID, err := rt.getUserIDFromContext(r.Context())
+	userID, err := getUserIDFromContext(r.Context())
 	if err != nil {
 		rt.log.Debug("error reading request context", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -350,7 +351,7 @@ func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) 
 // Путь "/api/shorten", POST
 
 func (rt *Router) shortenLongURLForJSON(w http.ResponseWriter, r *http.Request) {
-	userID, err := rt.getUserIDFromContext(r.Context())
+	userID, err := getUserIDFromContext(r.Context())
 	if err != nil {
 		rt.log.Debug("error reading request context", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -423,7 +424,7 @@ func (rt *Router) shortenLongURLForJSON(w http.ResponseWriter, r *http.Request) 
 // Путь "/api/shorten/batch", POST
 
 func (rt *Router) shortenBatch(w http.ResponseWriter, r *http.Request) {
-	userID, err := rt.getUserIDFromContext(r.Context())
+	userID, err := getUserIDFromContext(r.Context())
 	if err != nil {
 		rt.log.Debug("error reading request context", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -497,7 +498,7 @@ func setBaseForShortenBatch(baseURL string, batch model.BatchShortenRes) {
 // Путь "/api/user/urls", GET
 
 func (rt *Router) getUserURLs(w http.ResponseWriter, r *http.Request) {
-	userID, err := rt.getUserIDFromContext(r.Context())
+	userID, err := getUserIDFromContext(r.Context())
 	if err != nil {
 		rt.log.Debug("error reading request context", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -544,7 +545,7 @@ func setBaseForUserURLs(baseURL string, res model.UserURLsRes) {
 // Путь "/api/user/urls", DELETE
 
 func (rt *Router) markUserURLsDeleted(w http.ResponseWriter, r *http.Request) {
-	userID, err := rt.getUserIDFromContext(r.Context())
+	userID, err := getUserIDFromContext(r.Context())
 	if err != nil {
 		rt.log.Debug("error reading request context", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)

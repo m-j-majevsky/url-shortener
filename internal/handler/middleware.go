@@ -225,7 +225,7 @@ func CookieMiddleware(log *zap.Logger, storage UserStorage, params UserCookiePar
 				}
 			}
 
-			ctx := context.WithValue(r.Context(), params.userIDKey, userID)
+			ctx := context.WithValue(r.Context(), userIDKey, userID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
