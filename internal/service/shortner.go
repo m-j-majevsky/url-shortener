@@ -72,9 +72,7 @@ type StorageCleaner interface {
 }
 
 // StoragePinger — проверка доступности хранилища.
-// Не входит в композит Storage: метод Ping есть только у pgStorage,
-// а у LocalStorage его нет, поэтому Shortener.Ping проверяет его
-// через type assertion.
+// Входит в композит Storage: метод Ping есть у обеих реализаций.
 type StoragePinger interface {
 	// Ping проверяет доступность хранилища.
 	Ping(ctx context.Context) error
@@ -88,6 +86,7 @@ type Storage interface {
 	UserURLsStore
 	UserStore
 	StorageCleaner
+	StoragePinger
 }
 
 type ShortenerConfig struct {
@@ -290,11 +289,7 @@ func (s *Shortener) Resolve(ctx context.Context, token string) (string, error) {
 }
 
 func (s *Shortener) Ping(ctx context.Context) error {
-	swp, ok := s.config.Storage.(StoragePinger)
-	if !ok {
-		return fmt.Errorf("хранилище не поддерживает метод Ping")
-	}
-	return swp.Ping(ctx)
+	return s.config.Storage.Ping(ctx)
 }
 
 // CheckUserExists проверяет, существует ли пользователь с идентификатором userID.

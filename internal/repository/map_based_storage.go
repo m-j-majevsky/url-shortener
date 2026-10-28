@@ -352,3 +352,9 @@ func (s *LocalStorage) MarkUserURLsDeleted(_ context.Context, batch ToMarkDelete
 	}
 	return nil
 }
+
+// Ping проверяет доступность хранилища.
+// Хранилище целиком в памяти и всегда доступно.
+func (s *LocalStorage) Ping(_ context.Context) error {
+	return nil
+}
