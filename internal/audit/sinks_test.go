@@ -277,7 +277,7 @@ func TestHTTPSink_Send_NetworkError(t *testing.T) {
 	err := sink.Send(AuditEvent{TS: 1, Action: ActionShorten})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot send audit event")
+	assert.Contains(t, err.Error(), "не удалось отправить событие аудита")
 }
 
 // TestHTTPSink_Send_Timeout проверяет, что медленный приёмник не блокирует
