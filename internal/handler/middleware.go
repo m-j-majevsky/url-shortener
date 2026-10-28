@@ -156,7 +156,7 @@ func isValidRequestContentType(ct string) bool {
 
 // Функциональность установки-извлечения cookie с ID пользователя
 
-func CookieMiddleware(log *zap.Logger, storage UserStorage, params UserCookieParams) func(http.Handler) http.Handler {
+func CookieMiddleware(log *zap.Logger, users UserRegistrator, params UserCookieParams) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var userID string
@@ -186,7 +186,7 @@ func CookieMiddleware(log *zap.Logger, storage UserStorage, params UserCookiePar
 			}
 
 			if setNewCookie {
-				userID, err = storage.CreateUser(r.Context())
+				userID, err = users.CreateUser(r.Context())
 				if err != nil {
 					log.Error("user creating failed", zap.Error(err))
 					w.WriteHeader(http.StatusInternalServerError)
@@ -211,7 +211,7 @@ func CookieMiddleware(log *zap.Logger, storage UserStorage, params UserCookiePar
 				})
 			} else { // setNewCookie == false
 				// userID содержит непустое значение. Проверим его
-				found, err := storage.CheckUserExists(r.Context(), userID)
+				found, err := users.CheckUserExists(r.Context(), userID)
 				if err != nil {
 					log.Error("user check in storage failed", zap.Error(err))
 					w.WriteHeader(http.StatusInternalServerError)

@@ -100,9 +100,6 @@ func main() {
 
 	var localStorage *repository.LocalStorage
 	var saveStateMode bool
-	// us — хранилище как UserStorage для CookieMiddleware;
-	// конкретный объект присваивается при выборе хранилища ниже.
-	var us handler.UserStorage
 
 	if cfg.DatabaseDSN != "" {
 		pool, err := createPool(ctx, cfg.DatabaseDSN)
@@ -118,7 +115,6 @@ func main() {
 
 		pgStorage := repository.NewPgStorage(pool)
 		svcConfig.Storage = pgStorage
-		us = pgStorage
 		mainLogger.Info("Remote storage mode is on", zap.String("event", "preparing storage"))
 	} else {
 		localStorage, saveStateMode, err = loadLocalStorage(mainLogger, cfg.FileStoragePath)
@@ -127,7 +123,6 @@ func main() {
 		}
 
 		svcConfig.Storage = localStorage
-		us = localStorage
 		mainLogger.Info("Local storage mode is on", zap.String("event", "preparing storage"))
 	}
 
@@ -136,7 +131,7 @@ func main() {
 		defer saveStateDeferred(mainLogger, localStorage, cfg.FileStoragePath)
 	}
 
-	service, router, err := makeServiceAndRouter(handlerLogger, svcConfig, us, cfg, auditor)
+	service, router, err := makeServiceAndRouter(handlerLogger, svcConfig, cfg, auditor)
 	if err != nil {
 		mainLogger.Fatal(err.Error(), zap.String("event", "initializing service"))
 	}
@@ -277,15 +272,15 @@ func saveStateDeferred(log *zap.Logger, storage *repository.LocalStorage, path s
 	}
 }
 
-func makeServiceAndRouter(log *zap.Logger, svcConfig service.ShortenerConfig, us handler.UserStorage, cfg config.ApplicationConfig, auditor audit.Notifier) (*service.Shortener, http.Handler, error) {
+func makeServiceAndRouter(log *zap.Logger, svcConfig service.ShortenerConfig, cfg config.ApplicationConfig, auditor audit.Notifier) (*service.Shortener, http.Handler, error) {
 	svc, err := service.NewShortener(svcConfig)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	// Роутер принимает сервис через композитный интерфейс handler.Shortener,
-	// включающий все мелкие интерфейсы, и пользовательское хранилище — параметром.
-	rt := handler.NewRouter(handler.NewRouterParams(cfg, svc, us, auditor, log))
+	// включающий все мелкие интерфейсы.
+	rt := handler.NewRouter(handler.NewRouterParams(cfg, svc, auditor, log))
 
 	return svc, rt, nil
 }

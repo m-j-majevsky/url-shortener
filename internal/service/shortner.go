@@ -16,24 +16,82 @@ import (
 	"go.uber.org/zap"
 )
 
-type BasicStorage interface {
+// ---------------------------------------------------------------------------
+// Интерфейсы хранилища.
+// Реализация — repository.LocalStorage и repository.pgStorage,
+// удовлетворяющие всем интерфейсам неявно.
+// ---------------------------------------------------------------------------
+
+// URLStore — сохранение одиночной записи и разворот токена.
+type URLStore interface {
+	// Store сохраняет пару (токен, URL) для пользователя userID.
+	// Возвращает ErrOriginalURLExists, если исходный URL уже сохранён
+	// (в ошибке указан существующий токен),
+	// или ErrTokenTaken, если токен занят другим URL.
 	Store(ctx context.Context, token, longURL, userID string) error
+
+	// Resolve возвращает исходный URL по токену.
+	// Возвращает ErrTokenNotFound, если токен не найден,
+	// или ErrTokenIsDeleted, если токен уже удалён пользователем.
 	Resolve(ctx context.Context, token string) (string, error)
+}
+
+// BatchURLStore — пакетное сохранение записей.
+type BatchURLStore interface {
+	// BatchStore сохраняет батч пар (токен, URL) для пользователя userID.
+	// Реализует частичный успех: возвращает батч, дополненный признаками
+	// конфликтов (ConflictedURL) по элементам, которые не удалось сохранить.
+	// Уникальность StoreBatch.Token среди элементов батча и отсутствие
+	// пустых значений гарантирует вызывающий код.
 	BatchStore(ctx context.Context, batch repository.StoreBatch, userID string) (repository.StoreBatch, error)
+}
+
+// UserURLsStore — операции пользователя со своими записями: листинг и постановка на удаление.
+type UserURLsStore interface {
+	// ListUserURLs возвращает все записи (короткий URL, исходный URL)
+	// пользователя userID за время его жизни.
 	ListUserURLs(ctx context.Context, userID string) (model.UserURLsRes, error)
+
+	// MarkUserURLsDeleted помечает токены из батча как удалённые в хранилище.
 	MarkUserURLsDeleted(ctx context.Context, batch repository.ToMarkDeletedReqBatch) error
 }
 
+// UserStore — регистрация и проверка пользователя.
+type UserStore interface {
+	// CheckUserExists проверяет, существует ли пользователь с идентификатором uid.
+	CheckUserExists(ctx context.Context, uid string) (bool, error)
+
+	// CreateUser регистрирует нового пользователя и возвращает его идентификатор.
+	CreateUser(ctx context.Context) (string, error)
+}
+
+// StorageCleaner — зачистка записей по списку токенов.
 type StorageCleaner interface {
+	// DeleteByTokens удаляет из хранилища записи с токенами tokens.
 	DeleteByTokens(ctx context.Context, tokens []string) error
 }
 
+// StoragePinger — проверка доступности хранилища.
+// Не входит в композит Storage: метод Ping есть только у pgStorage,
+// а у LocalStorage его нет, поэтому Shortener.Ping проверяет его
+// через type assertion.
 type StoragePinger interface {
+	// Ping проверяет доступность хранилища.
 	Ping(ctx context.Context) error
 }
 
+// Storage — композиция всех интерфейсов хранилища, используемых сервисом.
+// Используется в ShortenerConfig для передачи хранилища в сервис.
+type Storage interface {
+	URLStore
+	BatchURLStore
+	UserURLsStore
+	UserStore
+	StorageCleaner
+}
+
 type ShortenerConfig struct {
-	Storage BasicStorage
+	Storage Storage
 
 	RandProv crypto.RandomByteProvider // источник случайных данных для генератора токенов
 
@@ -239,6 +297,24 @@ func (s *Shortener) Ping(ctx context.Context) error {
 	return swp.Ping(ctx)
 }
 
+// CheckUserExists проверяет, существует ли пользователь с идентификатором userID.
+func (s *Shortener) CheckUserExists(ctx context.Context, userID string) (bool, error) {
+	found, err := s.config.Storage.CheckUserExists(ctx, userID)
+	if err != nil {
+		return false, fmt.Errorf("ошибка хранилища: %w", err)
+	}
+	return found, nil
+}
+
+// CreateUser регистрирует нового пользователя и возвращает его идентификатор.
+func (s *Shortener) CreateUser(ctx context.Context) (string, error) {
+	uid, err := s.config.Storage.CreateUser(ctx)
+	if err != nil {
+		return "", fmt.Errorf("ошибка хранилища: %w", err)
+	}
+	return uid, nil
+}
+
 func (s *Shortener) BatchStore(ctx context.Context, req model.BatchShortenReq, userID string) (model.BatchShortenRes, error) {
 	reqLen := len(req)
 	if reqLen == 0 {
@@ -368,13 +444,7 @@ func (s *Shortener) restoreWithError(ctx context.Context, toRollback repository.
 			tokens = append(tokens, it.Token)
 		}
 
-		sc, ok := s.config.Storage.(StorageCleaner)
-		if !ok {
-			// Серьезная ошибка
-			errs = append(errs, fmt.Errorf("невозможно получить доступ к методу зачистки мусора из хранилища"))
-		}
-
-		rollbackErr := sc.DeleteByTokens(ctx, tokens)
+		rollbackErr := s.config.Storage.DeleteByTokens(ctx, tokens)
 		if rollbackErr != nil {
 			// Серьезная ошибка
 			errs = append(errs, rollbackErr)

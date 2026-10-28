@@ -92,11 +92,14 @@ type Shortener interface {
 	UserURLsLister
 	UserURLsDeleter
 	UndeleteFinalizer
+	UserRegistrator
 	Pinger
 }
 
-// UserStorage — регистрация/проверка пользователя для CookieMiddleware.
-type UserStorage interface {
+// UserRegistrator — проверка существования и анонимная регистрация пользователя.
+// Используется CookieMiddleware: пользователь создаётся автоматически,
+// без явной аутентификации.
+type UserRegistrator interface {
 	CheckUserExists(ctx context.Context, uid string) (bool, error)
 	CreateUser(ctx context.Context) (string, error)
 }
@@ -116,22 +119,20 @@ func NewUserCookieParams(cfg config.ApplicationConfig) UserCookieParams {
 }
 
 type RouterParams struct {
-	Service     Shortener
-	UserStorage UserStorage // для CookieMiddleware: регистрация/проверка пользователя
-	Logger      *zap.Logger
-	BaseURL     string
-	UserCookie  UserCookieParams
-	Auditor     audit.Notifier // nil (значение по умолчанию) означает, что аудит отключён.
+	Service    Shortener
+	Logger     *zap.Logger
+	BaseURL    string
+	UserCookie UserCookieParams
+	Auditor    audit.Notifier // nil (значение по умолчанию) означает, что аудит отключён.
 }
 
-func NewRouterParams(cfg config.ApplicationConfig, svc Shortener, us UserStorage, auditor audit.Notifier, log *zap.Logger) RouterParams {
+func NewRouterParams(cfg config.ApplicationConfig, svc Shortener, auditor audit.Notifier, log *zap.Logger) RouterParams {
 	return RouterParams{
-		Service:     svc,
-		UserStorage: us,
-		Logger:      log,
-		BaseURL:     cfg.TargetBaseURL,
-		UserCookie:  NewUserCookieParams(cfg),
-		Auditor:     auditor,
+		Service:    svc,
+		Logger:     log,
+		BaseURL:    cfg.TargetBaseURL,
+		UserCookie: NewUserCookieParams(cfg),
+		Auditor:    auditor,
 	}
 }
 
@@ -188,7 +189,7 @@ func NewRouter(params RouterParams) *Router {
 		r.Use(func(next http.Handler) http.Handler {
 			return responseContentTypeMiddleware(next, TextPlain)
 		})
-		r.Use(CookieMiddleware(mux.log, params.UserStorage, params.UserCookie))
+		r.Use(CookieMiddleware(mux.log, params.Service, params.UserCookie))
 
 		r.Post("/", mux.shortenLongURLForText)
 	})
@@ -198,7 +199,7 @@ func NewRouter(params RouterParams) *Router {
 		r.Use(func(next http.Handler) http.Handler {
 			return responseContentTypeMiddleware(next, AppJSON)
 		})
-		r.Use(CookieMiddleware(mux.log, params.UserStorage, params.UserCookie))
+		r.Use(CookieMiddleware(mux.log, params.Service, params.UserCookie))
 
 		r.Route("/user/urls", func(rr chi.Router) {
 			rr.Get("/", mux.getUserURLs)
