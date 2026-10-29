@@ -1,0 +1,36 @@
+goos: linux
+goarch: amd64
+pkg: github.com/m-j-majevsky/url-shortener/internal/handler
+cpu: Intel(R) Core(TM) i7-8850H CPU @ 2.60GHz
+BenchmarkGzipMiddleware/no_gzip         	  665131	      1539 ns/op	    2992 B/op	       9 allocs/op
+BenchmarkGzipMiddleware/no_gzip         	  758779	      1530 ns/op	    2992 B/op	       9 allocs/op
+BenchmarkGzipMiddleware/no_gzip         	  648230	      1564 ns/op	    2992 B/op	       9 allocs/op
+BenchmarkGzipMiddleware/no_gzip         	  707830	      1505 ns/op	    2992 B/op	       9 allocs/op
+BenchmarkGzipMiddleware/no_gzip         	  751777	      1693 ns/op	    2992 B/op	       9 allocs/op
+BenchmarkGzipMiddleware/no_gzip         	  762928	      1541 ns/op	    2992 B/op	       9 allocs/op
+BenchmarkGzipMiddleware/no_gzip         	  737702	      1539 ns/op	    2992 B/op	       9 allocs/op
+BenchmarkGzipMiddleware/no_gzip         	  694395	      1620 ns/op	    2992 B/op	       9 allocs/op
+BenchmarkGzipMiddleware/no_gzip         	  770728	      1560 ns/op	    2992 B/op	       9 allocs/op
+BenchmarkGzipMiddleware/no_gzip         	  718485	      1616 ns/op	    2992 B/op	       9 allocs/op
+BenchmarkGzipMiddleware/gzip            	    5949	    179867 ns/op	  815312 B/op	      30 allocs/op
+BenchmarkGzipMiddleware/gzip            	    6093	    237548 ns/op	  815312 B/op	      30 allocs/op
+BenchmarkGzipMiddleware/gzip            	    6307	    272741 ns/op	  815312 B/op	      30 allocs/op
+BenchmarkGzipMiddleware/gzip            	    6627	    232282 ns/op	  815312 B/op	      30 allocs/op
+BenchmarkGzipMiddleware/gzip            	    5355	    256790 ns/op	  815312 B/op	      30 allocs/op
+BenchmarkGzipMiddleware/gzip            	    5674	    205794 ns/op	  815312 B/op	      30 allocs/op
+BenchmarkGzipMiddleware/gzip            	    5850	    189309 ns/op	  815312 B/op	      30 allocs/op
+BenchmarkGzipMiddleware/gzip            	    5524	    207241 ns/op	  815312 B/op	      30 allocs/op
+BenchmarkGzipMiddleware/gzip            	    7422	    194787 ns/op	  815312 B/op	      30 allocs/op
+BenchmarkGzipMiddleware/gzip            	    6603	    189074 ns/op	  815312 B/op	      30 allocs/op
+BenchmarkGzipMiddleware/gzip_error_409  	  737530	      1606 ns/op	    1248 B/op	      13 allocs/op
+BenchmarkGzipMiddleware/gzip_error_409  	  710524	      1592 ns/op	    1248 B/op	      13 allocs/op
+BenchmarkGzipMiddleware/gzip_error_409  	  794486	      1556 ns/op	    1248 B/op	      13 allocs/op
+BenchmarkGzipMiddleware/gzip_error_409  	  739730	      1529 ns/op	    1248 B/op	      13 allocs/op
+BenchmarkGzipMiddleware/gzip_error_409  	  744014	      1534 ns/op	    1248 B/op	      13 allocs/op
+BenchmarkGzipMiddleware/gzip_error_409  	  739401	      1558 ns/op	    1248 B/op	      13 allocs/op
+BenchmarkGzipMiddleware/gzip_error_409  	  765369	      1530 ns/op	    1248 B/op	      13 allocs/op
+BenchmarkGzipMiddleware/gzip_error_409  	  690691	      1520 ns/op	    1248 B/op	      13 allocs/op
+BenchmarkGzipMiddleware/gzip_error_409  	  752576	      1547 ns/op	    1248 B/op	      13 allocs/op
+BenchmarkGzipMiddleware/gzip_error_409  	  698838	      1532 ns/op	    1248 B/op	      13 allocs/op
+PASS
+ok  	github.com/m-j-majevsky/url-shortener/internal/handler	39.048s

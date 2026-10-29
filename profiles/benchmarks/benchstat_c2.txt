@@ -1,0 +1,26 @@
+goos: linux
+goarch: amd64
+pkg: github.com/m-j-majevsky/url-shortener/internal/handler
+cpu: Intel(R) Core(TM) i7-8850H CPU @ 2.60GHz
+                              │ profiles/benchmarks/bench_before_c2_stat.txt │ profiles/benchmarks/bench_after_c2_stat.txt │
+                              │                    sec/op                    │       sec/op         vs base                │
+GzipMiddleware/no_gzip                                          1.551µ ±  4%          1.609µ ± 13%        ~ (p=0.060 n=10)
+GzipMiddleware/gzip                                            206.52µ ± 24%          40.45µ ±  6%  -80.41% (p=0.000 n=10)
+GzipMiddleware/gzip_error_409                                   1.541µ ±  3%          1.469µ ±  3%   -4.64% (p=0.002 n=10)
+geomean                                                         7.901µ                4.572µ        -42.13%
+
+                              │ profiles/benchmarks/bench_before_c2_stat.txt │ profiles/benchmarks/bench_after_c2_stat.txt │
+                              │                     B/op                     │       B/op         vs base                  │
+GzipMiddleware/no_gzip                                          2.922Ki ± 0%        2.922Ki ± 0%        ~ (p=1.000 n=10) ¹
+GzipMiddleware/gzip                                           796.203Ki ± 0%        1.422Ki ± 0%  -99.82% (p=0.000 n=10)
+GzipMiddleware/gzip_error_409                                   1.219Ki ± 0%        1.062Ki ± 0%  -12.82% (p=0.000 n=10)
+geomean                                                         14.15Ki             1.640Ki       -88.41%
+¹ all samples are equal
+
+                              │ profiles/benchmarks/bench_before_c2_stat.txt │ profiles/benchmarks/bench_after_c2_stat.txt │
+                              │                  allocs/op                   │     allocs/op      vs base                  │
+GzipMiddleware/no_gzip                                            9.000 ± 0%          9.000 ± 0%        ~ (p=1.000 n=10) ¹
+GzipMiddleware/gzip                                               30.00 ± 0%          13.00 ± 0%  -56.67% (p=0.000 n=10)
+GzipMiddleware/gzip_error_409                                     13.00 ± 0%          12.00 ± 0%   -7.69% (p=0.000 n=10)
+geomean                                                           15.20               11.20       -26.32%
+¹ all samples are equal

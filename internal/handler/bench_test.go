@@ -41,6 +41,16 @@ func benchTargetHandler() http.Handler {
 	})
 }
 
+// benchConflictHandler — хендлер конфликтного ответа: путь 409 в post run2.
+// Тело уходит несжатым (statusCode >= 300 => gzipOn = false), но compressWriter
+// при жадной инициализации всё равно аллоцирует gzip.Writer —
+// кейс gzip_error_409 замеряет именно эту холостую аллокацию.
+func benchConflictHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "занят", http.StatusConflict)
+	})
+}
+
 func newBenchRequest(path string, gzipped bool) *http.Request {
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	req.Header.Set(ContentType, AppJSON)
@@ -58,20 +68,23 @@ func devNullLogger() *zap.Logger {
 	return zap.New(core)
 }
 
-// BenchmarkGzipMiddleware — цена сжатия против отсутствия сжатия.
+// BenchmarkGzipMiddleware — цена сжатия против отсутствия сжатия,
+// плюс цена жадной инициализации писателя на ошибочном ответе.
 // Базовая линия для решения по sync.Pool для gzip.NewWriter:
-// сейчас compressWriter создаёт новый писатель на каждый сжимаемый ответ.
+// сейчас compressWriter создаёт новый gzip.Writer на каждый запрос,
+// даже когда сжатие не потребовалось (кейс gzip_error_409).
 func BenchmarkGzipMiddleware(b *testing.B) {
-	h := GzipMiddleware(benchTargetHandler())
-
 	for _, tc := range []struct {
 		name    string
 		gzipped bool
+		target  func() http.Handler
 	}{
-		{"no_gzip", false},
-		{"gzip", true},
+		{"no_gzip", false, benchTargetHandler},
+		{"gzip", true, benchTargetHandler},
+		{"gzip_error_409", true, benchConflictHandler},
 	} {
 		b.Run(tc.name, func(b *testing.B) {
+			h := GzipMiddleware(tc.target())
 			req := newBenchRequest("/api/user/urls", tc.gzipped)
 			b.ReportAllocs()
 			b.ResetTimer()

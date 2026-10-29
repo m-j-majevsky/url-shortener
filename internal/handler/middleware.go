@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/m-j-majevsky/url-shortener/internal/auth"
@@ -21,21 +22,30 @@ func responseContentTypeMiddleware(next http.Handler, ct string) http.Handler {
 	})
 }
 
+// gzipWriterPool — пул gzip.Writer. Создание писателя аллоцирует ~0,8 МБ
+// внутренних буферов компрессора flate (hashHead/hashPrev), поэтому раньше
+// каждый сжимаемый ответ платил эту цену заново. Reset гарантирует
+// эквивалентность NewWriter, что делает переиспользование безопасным.
+// Писатель извлекается лениво — при первом сжатом Write: на ответах без
+// сжатия (ошибки, 204/304) пул не задействуется вовсе.
+var gzipWriterPool = sync.Pool{
+	New: func() any {
+		return gzip.NewWriter(nil)
+	},
+}
+
 // compressWriter реализует интерфейс http.ResponseWriter и позволяет прозрачно для сервера
 // сжимать передаваемые данные и выставлять правильные HTTP-заголовки
 type compressWriter struct {
 	w           http.ResponseWriter
-	zw          *gzip.Writer
+	zw          *gzip.Writer // nil, пока сжатие не потребовалось; извлекается из пула при первом сжатом Write
 	wroteHeader bool
 	gzipOn      bool // gzip применён: тело пишется в zw и объявлено заголовком Content-Encoding
 }
 
 // newCompressWriter оборачивает http.ResponseWriter в сжимающую обёртку.
 func newCompressWriter(w http.ResponseWriter) *compressWriter {
-	return &compressWriter{
-		w:  w,
-		zw: gzip.NewWriter(w),
-	}
+	return &compressWriter{w: w}
 }
 
 // Header делегирует заголовки оригинальному writer'у, чтобы хендлеры
@@ -55,6 +65,12 @@ func (c *compressWriter) Write(p []byte) (int, error) {
 	// Тело пишем в gzip.Writer только если заголовок Content-Encoding выставлен;
 	// иначе — напрямую в оригинальный writer: ответ остаётся несжатым.
 	if c.gzipOn {
+		if c.zw == nil {
+			// Ленивая инициализация: писатель извлекается из пула только
+			// когда сжатие действительно началось.
+			c.zw = gzipWriterPool.Get().(*gzip.Writer)
+			c.zw.Reset(c.w)
+		}
 		return c.zw.Write(p)
 	}
 	return c.w.Write(p)
@@ -85,13 +101,18 @@ func (c *compressWriter) WriteHeader(statusCode int) {
 // Close закрывает gzip.Writer и досылает все данные из буфера,
 // если gzip был применён к ответу.
 func (c *compressWriter) Close() error {
-	if !c.gzipOn {
-		// Gzip не применялся (ответ без тела или ошибка): Close здесь
-		// записал бы в w пустой gzip-поток (заголовок и футер),
-		// которого в ответе быть не должно.
+	if c.zw == nil {
+		// Gzip не потребовался (ошибка, ответ без тела или без единого Write):
+		// писатель из пула не извлекался — возвращать нечего.
 		return nil
 	}
-	return c.zw.Close()
+	err := c.zw.Close()
+	// Reset(nil) разрывает ссылку на ResponseWriter, иначе пул удерживал бы
+	// ответ вместе с буферами; после Reset писатель пригоден к переиспользованию.
+	c.zw.Reset(nil)
+	gzipWriterPool.Put(c.zw)
+	c.zw = nil // защита от повторного Close
+	return err
 }
 
 // compressReader реализует интерфейс io.ReadCloser и позволяет прозрачно для сервера
