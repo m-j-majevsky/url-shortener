@@ -339,7 +339,7 @@ go test -run='^$' -bench=. -benchmem -count=10 ./internal/service/ > bench_after
 benchstat bench_before.txt bench_after.txt
 ```
 
-Один бенчмарок с подвечерами — по имени:
+Один бенчмарк с подбенчмарками — по имени:
 
 ```bash
 go test -run='^$' -bench='BenchmarkStore' -benchmem ./internal/repository/
