@@ -247,7 +247,7 @@ func (s *LocalStorage) Store(_ context.Context, token, longURL, userID string) e
 	defer s.mu.Unlock()
 
 	// Уникальность original_url проверяется по индексу за O(1);
-	// раньше здесь был полный перебор значений data (см. журнал, кандидат № 1).
+	// раньше здесь был полный перебор значений data.
 	if tok, ok := s.byURL[longURL]; ok {
 		return NewErrOriginalURLExists(tok, longURL)
 	}

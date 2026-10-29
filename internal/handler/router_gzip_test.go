@@ -1,5 +1,5 @@
 // router_gzip_test.go — тесты семантики gzip-миддлвэра с пулом писателей
-// (кандидат №2, sync.Pool). Дополняют TestGzipCompression из router_test.go
+// (sync.Pool). Дополняют TestGzipCompression из router_test.go
 // кейсами, которых там нет: отказ от сжатия ошибок и 204, переиспользование
 // писателей из пула и конкурентная работа пула (гонится под -race).
 //

@@ -879,7 +879,7 @@ func (suite *MapBasedDBTestSuite) TestLoadFromFile_ErrInvalidJSON() {
 	suite.Equal(yandexURL, url)
 }
 
-// Кандидат №1: регрессионные кейсы индекса original_url -> token.
+// Регрессионные кейсы индекса original_url -> token.
 // Инвариант: для каждой записи data[token]=url существует byURL[url]=token
 // и наоборот; отображение биективно, так как Store/BatchStore не записывают
 // дубликаты URL. Жёсткое удаление обязано синхронно чистить обе мапы,

@@ -69,10 +69,10 @@ func devNullLogger() *zap.Logger {
 }
 
 // BenchmarkGzipMiddleware — цена сжатия против отсутствия сжатия,
-// плюс цена жадной инициализации писателя на ошибочном ответе.
-// Базовая линия для решения по sync.Pool для gzip.NewWriter:
-// сейчас compressWriter создаёт новый gzip.Writer на каждый запрос,
-// даже когда сжатие не потребовалось (кейс gzip_error_409).
+// плюс цена ленивого получения писателя на ответах без сжатия.
+// Писатель gzip.Writer переиспользуется через sync.Pool и извлекается
+// только когда сжатие реально потребовалось; кейс gzip_error_409
+// замеряет путь, на котором сжатие не выполняется вовсе.
 func BenchmarkGzipMiddleware(b *testing.B) {
 	for _, tc := range []struct {
 		name    string
