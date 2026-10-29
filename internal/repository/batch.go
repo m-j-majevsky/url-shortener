@@ -39,7 +39,6 @@ type (
 
 // Методы и утилиты для работы с StoreBatch
 
-
 // MayBeAddErrors собирает признаки конфликтов пакета (занятые токены,
 // уже существующие URL) в один joined error.
 func MayBeAddErrors(batch StoreBatch) (StoreBatch, error) {

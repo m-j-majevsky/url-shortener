@@ -3,9 +3,10 @@
 // что делает корректным сравнение heap-профилей через pprof -diff_base.
 //
 // Режимы:
-//   -mode post   — одиночные POST / с уникальными URL (пиковая нагрузка по памяти);
-//   -mode get    — GET /{token} по токенам, собранным на прогреве (307, без сжатия);
-//   -mode batch  — POST /api/shorten/batch с JSON-пакетами по -batch элементов.
+//
+//	-mode post   — одиночные POST / с уникальными URL (пиковая нагрузка по памяти);
+//	-mode get    — GET /{token} по токенам, собранным на прогреве (307, без сжатия);
+//	-mode batch  — POST /api/shorten/batch с JSON-пакетами по -batch элементов.
 package main
 
 import (
