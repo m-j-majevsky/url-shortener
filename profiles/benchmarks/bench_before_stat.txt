@@ -1,0 +1,184 @@
+PASS
+ok  	github.com/m-j-majevsky/url-shortener/internal/audit	0.003s
+PASS
+ok  	github.com/m-j-majevsky/url-shortener/internal/auth	0.002s
+?   	github.com/m-j-majevsky/url-shortener/internal/config	[no test files]
+?   	github.com/m-j-majevsky/url-shortener/internal/crypto	[no test files]
+goos: linux
+goarch: amd64
+pkg: github.com/m-j-majevsky/url-shortener/internal/encoding
+cpu: Intel(R) Core(TM) i7-8850H CPU @ 2.60GHz
+BenchmarkEncodeToBase62 	 3868323	       300.6 ns/op	      32 B/op	       4 allocs/op
+BenchmarkEncodeToBase62 	 3725446	       311.3 ns/op	      32 B/op	       4 allocs/op
+BenchmarkEncodeToBase62 	 3216302	       352.1 ns/op	      32 B/op	       4 allocs/op
+BenchmarkEncodeToBase62 	 3726864	       313.4 ns/op	      32 B/op	       4 allocs/op
+BenchmarkEncodeToBase62 	 3836680	       321.9 ns/op	      32 B/op	       4 allocs/op
+BenchmarkEncodeToBase62 	 3856753	       371.2 ns/op	      32 B/op	       4 allocs/op
+BenchmarkEncodeToBase62 	 3706167	       348.1 ns/op	      32 B/op	       4 allocs/op
+BenchmarkEncodeToBase62 	 3379588	       324.2 ns/op	      32 B/op	       4 allocs/op
+BenchmarkEncodeToBase62 	 3847405	       406.1 ns/op	      32 B/op	       4 allocs/op
+BenchmarkEncodeToBase62 	 3725232	       348.8 ns/op	      32 B/op	       4 allocs/op
+BenchmarkIsValidBase62  	100000000	        11.28 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidBase62  	100000000	        10.12 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidBase62  	100000000	        10.37 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidBase62  	100000000	        10.17 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidBase62  	100000000	        10.92 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidBase62  	100000000	        10.86 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidBase62  	100000000	        10.84 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidBase62  	100000000	        10.65 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidBase62  	100000000	        10.55 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsValidBase62  	100000000	        10.51 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/m-j-majevsky/url-shortener/internal/encoding	26.613s
+goos: linux
+goarch: amd64
+pkg: github.com/m-j-majevsky/url-shortener/internal/handler
+cpu: Intel(R) Core(TM) i7-8850H CPU @ 2.60GHz
+BenchmarkGzipMiddleware/no_gzip         	  697114	      1680 ns/op	    2992 B/op	       9 allocs/op
+BenchmarkGzipMiddleware/no_gzip         	  711630	      1629 ns/op	    2992 B/op	       9 allocs/op
+BenchmarkGzipMiddleware/no_gzip         	  726938	      1655 ns/op	    2992 B/op	       9 allocs/op
+BenchmarkGzipMiddleware/no_gzip         	  668618	      1776 ns/op	    2992 B/op	       9 allocs/op
+BenchmarkGzipMiddleware/no_gzip         	  649956	      1954 ns/op	    2992 B/op	       9 allocs/op
+BenchmarkGzipMiddleware/no_gzip         	  622552	      1721 ns/op	    2992 B/op	       9 allocs/op
+BenchmarkGzipMiddleware/no_gzip         	  743341	      1679 ns/op	    2992 B/op	       9 allocs/op
+BenchmarkGzipMiddleware/no_gzip         	  754725	      1689 ns/op	    2992 B/op	       9 allocs/op
+BenchmarkGzipMiddleware/no_gzip         	  729795	      1578 ns/op	    2992 B/op	       9 allocs/op
+BenchmarkGzipMiddleware/no_gzip         	  751167	      1606 ns/op	    2992 B/op	       9 allocs/op
+BenchmarkGzipMiddleware/gzip            	    7308	    171342 ns/op	  815312 B/op	      30 allocs/op
+BenchmarkGzipMiddleware/gzip            	    6957	    186208 ns/op	  815312 B/op	      30 allocs/op
+BenchmarkGzipMiddleware/gzip            	    6842	    210898 ns/op	  815312 B/op	      30 allocs/op
+BenchmarkGzipMiddleware/gzip            	    7920	    208627 ns/op	  815312 B/op	      30 allocs/op
+BenchmarkGzipMiddleware/gzip            	    7299	    269707 ns/op	  815312 B/op	      30 allocs/op
+BenchmarkGzipMiddleware/gzip            	    6481	    232551 ns/op	  815312 B/op	      30 allocs/op
+BenchmarkGzipMiddleware/gzip            	    7539	    191115 ns/op	  815312 B/op	      30 allocs/op
+BenchmarkGzipMiddleware/gzip            	    7564	    204589 ns/op	  815312 B/op	      30 allocs/op
+BenchmarkGzipMiddleware/gzip            	    6361	    193752 ns/op	  815312 B/op	      30 allocs/op
+BenchmarkGzipMiddleware/gzip            	    7744	    227016 ns/op	  815312 B/op	      30 allocs/op
+BenchmarkLoggingMiddleware/nop          	  608685	      2004 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkLoggingMiddleware/nop          	  613743	      1848 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkLoggingMiddleware/nop          	  645909	      1855 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkLoggingMiddleware/nop          	  566732	      1814 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkLoggingMiddleware/nop          	  676566	      1834 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkLoggingMiddleware/nop          	  610387	      1801 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkLoggingMiddleware/nop          	  670041	      1961 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkLoggingMiddleware/nop          	  637810	      2087 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkLoggingMiddleware/nop          	  623212	      1860 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkLoggingMiddleware/nop          	  639716	      1878 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkLoggingMiddleware/dev_null     	  332707	      3759 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkLoggingMiddleware/dev_null     	  325152	      3875 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkLoggingMiddleware/dev_null     	  338163	      3615 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkLoggingMiddleware/dev_null     	  345160	      3684 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkLoggingMiddleware/dev_null     	  342714	      3685 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkLoggingMiddleware/dev_null     	  340767	      3971 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkLoggingMiddleware/dev_null     	  309304	      3641 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkLoggingMiddleware/dev_null     	  289659	      3751 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkLoggingMiddleware/dev_null     	  323262	      3906 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkLoggingMiddleware/dev_null     	  329511	      3823 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkFullChain                      	    6736	    166040 ns/op	  815672 B/op	      34 allocs/op
+BenchmarkFullChain                      	    6655	    179101 ns/op	  815672 B/op	      34 allocs/op
+BenchmarkFullChain                      	    7796	    191105 ns/op	  815672 B/op	      34 allocs/op
+BenchmarkFullChain                      	    6756	    181341 ns/op	  815672 B/op	      34 allocs/op
+BenchmarkFullChain                      	    6418	    180838 ns/op	  815672 B/op	      34 allocs/op
+BenchmarkFullChain                      	    7042	    211915 ns/op	  815672 B/op	      34 allocs/op
+BenchmarkFullChain                      	    7238	    183508 ns/op	  815672 B/op	      34 allocs/op
+BenchmarkFullChain                      	    6813	    177820 ns/op	  815672 B/op	      34 allocs/op
+BenchmarkFullChain                      	    7351	    162378 ns/op	  815672 B/op	      34 allocs/op
+BenchmarkFullChain                      	    7723	    178707 ns/op	  815672 B/op	      34 allocs/op
+PASS
+ok  	github.com/m-j-majevsky/url-shortener/internal/handler	66.301s
+?   	github.com/m-j-majevsky/url-shortener/internal/handler/mocks	[no test files]
+?   	github.com/m-j-majevsky/url-shortener/internal/logger	[no test files]
+?   	github.com/m-j-majevsky/url-shortener/internal/model	[no test files]
+goos: linux
+goarch: amd64
+pkg: github.com/m-j-majevsky/url-shortener/internal/repository
+cpu: Intel(R) Core(TM) i7-8850H CPU @ 2.60GHz
+BenchmarkLocalStorage_Store/preseed_0         	   10000	    114812 ns/op	     212 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_0         	   10000	    100216 ns/op	     212 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_0         	   12006	    105173 ns/op	     198 B/op	       2 allocs/op
+BenchmarkLocalStorage_Store/preseed_0         	   10000	    103548 ns/op	     212 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_0         	   12134	    111532 ns/op	     196 B/op	       2 allocs/op
+BenchmarkLocalStorage_Store/preseed_0         	   12424	    106579 ns/op	     192 B/op	       2 allocs/op
+BenchmarkLocalStorage_Store/preseed_0         	   10000	    107401 ns/op	     212 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_0         	   12069	    105997 ns/op	     197 B/op	       2 allocs/op
+BenchmarkLocalStorage_Store/preseed_0         	   12006	    106129 ns/op	     198 B/op	       2 allocs/op
+BenchmarkLocalStorage_Store/preseed_0         	   12267	    104986 ns/op	     194 B/op	       2 allocs/op
+BenchmarkLocalStorage_Store/preseed_1000      	   10000	    111122 ns/op	     193 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_1000      	   10000	    115654 ns/op	     193 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_1000      	   10000	    113506 ns/op	     193 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_1000      	   10000	    112934 ns/op	     193 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_1000      	   10000	    111756 ns/op	     193 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_1000      	   10000	    113421 ns/op	     193 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_1000      	   10000	    119961 ns/op	     193 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_1000      	   10000	    122593 ns/op	     193 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_1000      	   10000	    115804 ns/op	     193 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_1000      	   10000	    115395 ns/op	     193 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_5000      	   10000	    173285 ns/op	     282 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_5000      	   10000	    180862 ns/op	     298 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_5000      	    9403	    179007 ns/op	     264 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_5000      	   10000	    178149 ns/op	     306 B/op	       2 allocs/op
+BenchmarkLocalStorage_Store/preseed_5000      	   10000	    176616 ns/op	     298 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_5000      	   10000	    175539 ns/op	     298 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_5000      	   10000	    184728 ns/op	     298 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_5000      	   10000	    177041 ns/op	     306 B/op	       2 allocs/op
+BenchmarkLocalStorage_Store/preseed_5000      	   10000	    185075 ns/op	     290 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_5000      	   10000	    172317 ns/op	     298 B/op	       1 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_1000    	12454240	       104.0 ns/op	       7 B/op	       1 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_1000    	12202174	       103.1 ns/op	       7 B/op	       1 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_1000    	12907873	        98.63 ns/op	       7 B/op	       1 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_1000    	10450206	       103.2 ns/op	       7 B/op	       1 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_1000    	11320453	        93.44 ns/op	       7 B/op	       1 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_1000    	11637460	        96.45 ns/op	       7 B/op	       1 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_1000    	12494743	        98.20 ns/op	       7 B/op	       1 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_1000    	12514760	        97.12 ns/op	       7 B/op	       1 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_1000    	11903776	        96.95 ns/op	       7 B/op	       1 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_1000    	12385528	       103.0 ns/op	       7 B/op	       1 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_5000    	11145786	       113.7 ns/op	      14 B/op	       1 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_5000    	11276376	       108.5 ns/op	      14 B/op	       1 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_5000    	10961130	       115.6 ns/op	      14 B/op	       1 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_5000    	11567294	       103.8 ns/op	      14 B/op	       1 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_5000    	11164712	       110.5 ns/op	      14 B/op	       1 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_5000    	11732175	       102.9 ns/op	      14 B/op	       1 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_5000    	11718526	       106.3 ns/op	      14 B/op	       1 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_5000    	11286769	       104.2 ns/op	      14 B/op	       1 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_5000    	12187587	       105.4 ns/op	      14 B/op	       1 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_5000    	11701941	       103.6 ns/op	      14 B/op	       1 allocs/op
+PASS
+ok  	github.com/m-j-majevsky/url-shortener/internal/repository	93.625s
+goos: linux
+goarch: amd64
+pkg: github.com/m-j-majevsky/url-shortener/internal/service
+cpu: Intel(R) Core(TM) i7-8850H CPU @ 2.60GHz
+BenchmarkGenerateAndStore/preseed=0         	   10000	    116689 ns/op	         1.000 store-attempts/op	     261 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=0         	   10000	    119615 ns/op	         1.000 store-attempts/op	     261 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=0         	   10000	    114108 ns/op	         1.000 store-attempts/op	     261 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=0         	   10000	    113680 ns/op	         1.000 store-attempts/op	     261 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=0         	   10000	    112075 ns/op	         1.000 store-attempts/op	     261 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=0         	   10000	    111221 ns/op	         1.000 store-attempts/op	     261 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=0         	   10000	    115183 ns/op	         1.000 store-attempts/op	     261 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=0         	   10000	    114771 ns/op	         1.000 store-attempts/op	     261 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=0         	   10000	    114669 ns/op	         1.000 store-attempts/op	     261 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=0         	   10000	    114356 ns/op	         1.000 store-attempts/op	     261 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=1k        	   10000	    145717 ns/op	         1.000 store-attempts/op	     241 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=1k        	   10000	    141296 ns/op	         1.000 store-attempts/op	     241 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=1k        	   10000	    138039 ns/op	         1.000 store-attempts/op	     241 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=1k        	   10000	    141612 ns/op	         1.000 store-attempts/op	     241 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=1k        	   10000	    139439 ns/op	         1.000 store-attempts/op	     241 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=1k        	   10000	    138122 ns/op	         1.000 store-attempts/op	     241 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=1k        	   10000	    140326 ns/op	         1.000 store-attempts/op	     241 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=1k        	   10000	    142462 ns/op	         1.000 store-attempts/op	     241 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=1k        	   10000	    137343 ns/op	         1.000 store-attempts/op	     241 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=1k        	   10000	    140519 ns/op	         1.000 store-attempts/op	     241 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=5k        	   10000	    189918 ns/op	         1.000 store-attempts/op	     347 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=5k        	   10000	    189474 ns/op	         1.000 store-attempts/op	     347 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=5k        	   10000	    190234 ns/op	         1.000 store-attempts/op	     339 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=5k        	   10000	    199011 ns/op	         1.000 store-attempts/op	     355 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=5k        	   10000	    189052 ns/op	         1.000 store-attempts/op	     355 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=5k        	   10000	    192749 ns/op	         1.000 store-attempts/op	     347 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=5k        	   10000	    192734 ns/op	         1.000 store-attempts/op	     347 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=5k        	   10000	    189761 ns/op	         1.000 store-attempts/op	     339 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=5k        	   10000	    188960 ns/op	         1.000 store-attempts/op	     347 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=5k        	   10000	    189228 ns/op	         1.000 store-attempts/op	     347 B/op	       6 allocs/op
+PASS
+ok  	github.com/m-j-majevsky/url-shortener/internal/service	53.900s
+?   	github.com/m-j-majevsky/url-shortener/internal/service/mocks	[no test files]

@@ -71,6 +71,12 @@
   все запросы пойдут по ложному префиксу и вернут ошибки, а не время ответа.
 - **Редирект не ходит наружу.** loadgen не следует за 307 — переходы не уходят
   в сеть и не искажают время ответа.
+- **Бенчи вставки меряют среднюю цену в растущем хранилище.** `Store` и
+  `GenerateAndStore` добавляют записи по ходу прогона: к концу замера в
+  хранилище `b.N + preseed` записей, и ns/op — средняя цена по всему прогону,
+  а не фиксированная величина. Абсолютные числа зависят от benchtime; сравнение
+  до/после корректно только при одинаковом benchtime (держим значение по
+  умолчанию в обеих точках).
 - **benchstat — только по файлам с повторами.** Одиночный прогон `go test
   -bench` показывает порядок величин, но шум на малых значениях велик;
   выводы по кандидатам делаются по `-count=10` и выводу benchstat
@@ -88,7 +94,7 @@
 
 ### Дымовой прогон после сборки 54o
 
-Дата: `2026-10-29` · Команда: `go test -run='^$' -bench=. -benchmem -benchtime=10x ./internal/...`. Детальный результат прогона см. в `./profiles/bench_smoke.txt`.
+Дата: `2026-10-29` · Команда: `go test -run='^$' -bench=. -benchmem -benchtime=10x ./internal/...`. Детальный результат прогона см. в `./profiles/benchmarks/bench_smoke.txt`.
 
 Все 16 подвечерней (15 bench-групп + метрика `store-attempts/op`) собрались и
 отработали без паник; `store-attempts/op = 1.000`. Это санитарная проверка
@@ -98,28 +104,62 @@
 
 ### Микробенчмарки — базовая линия
 
-Дата: `____`
+Дата: `2026-10-29` · Файлы: `./profiles/benchmarks/bench_before.txt` (одиночный
+прогон, ориентир) и `./profiles/benchmarks/bench_before_stat.txt` (10 повторов,
+для benchstat). В таблице — медианы по 10 повторам из stat-файла; CV —
+коэффициент вариации (ст. отклонение / среднее).
 
-| Пакет | Бенчмарок | ns/op | B/op | allocs/op |
-|-------|-----------|-------|------|-----------|
-| encoding | BenchmarkEncodeToBase62 | | | |
-| encoding | BenchmarkIsValidBase62 | | | |
-| service | BenchmarkGenerateAndStore/seed0 | | | |
-| service | BenchmarkGenerateAndStore/seed1k | | | |
-| service | BenchmarkGenerateAndStore/seed5k | | | |
-| service | — метрика store-attempts/op | | | |
-| repository | BenchmarkStore/seed0 | | | |
-| repository | BenchmarkStore/seed1k | | | |
-| repository | BenchmarkStore/seed5k | | | |
-| repository | BenchmarkResolve/seed1k | | | |
-| repository | BenchmarkResolve/seed5k | | | |
-| handler | BenchmarkGzipMiddleware/no_gzip | | | |
-| handler | BenchmarkGzipMiddleware/gzip | | | |
-| handler | BenchmarkLoggingMiddleware/nop | | | |
-| handler | BenchmarkLoggingMiddleware/dev_null | | | |
-| handler | BenchmarkFullChain | | | |
+| Пакет | Бенчмарок | ns/op (медиана) | CV | B/op | allocs/op |
+|-------|-----------|-----------------|----|------|-----------|
+| encoding | BenchmarkEncodeToBase62 | 336 | 9.5% | 32 | 4 |
+| encoding | BenchmarkIsValidBase62 | 10.6 | 3.4% | 0 | 0 |
+| service | BenchmarkGenerateAndStore/preseed=0 | 114 512 | 2.0% | 261 | 6 |
+| service | BenchmarkGenerateAndStore/preseed=1k | 140 423 | 1.8% | 241 | 6 |
+| service | BenchmarkGenerateAndStore/preseed=5k | 189 840 | 1.6% | 347 | 6 |
+| service | — метрика store-attempts/op | 1.000 | — | — | — |
+| repository | BenchmarkLocalStorage_Store/preseed_0 | 106 063 | 3.8% | 212 | 1–2 |
+| repository | BenchmarkLocalStorage_Store/preseed_1000 | 114 451 | 3.1% | 193 | 1 |
+| repository | BenchmarkLocalStorage_Store/preseed_5000 | 177 595 | 2.4% | 298 | 1–2 |
+| repository | BenchmarkLocalStorage_Resolve/preseed_1000 | 98.4 | 3.7% | 7 | 1 |
+| repository | BenchmarkLocalStorage_Resolve/preseed_5000 | 105.8 | 4.2% | 14 | 1 |
+| handler | BenchmarkGzipMiddleware/no_gzip | 1 680 | 6.3% | 2 992 | 9 |
+| handler | BenchmarkGzipMiddleware/gzip | 206 608 | 13.4% | 815 312 | 30 |
+| handler | BenchmarkLoggingMiddleware/nop | 1 858 | 4.9% | 3 352 | 13 |
+| handler | BenchmarkLoggingMiddleware/dev_null | 3 755 | 3.2% | 3 352 | 13 |
+| handler | BenchmarkFullChain | 179 970 | 7.5% | 815 672 | 34 |
 
-Выводы по базовой линии (куда смотреть в первую очередь): `____`
+`store-attempts/op` = 1.000 во всех повторах и на всех preseed — ретраев по
+занятым токенам нет, базовая линия свободна от цены коллизий.
+
+Выводы по базовой линии (куда смотреть в первую очередь):
+
+1. **Контрольная группа здорова.** `Resolve`: 98 → 106 нс/op при росте preseed
+   1k → 5k — колебания в пределах шума (CV до 4%), аллокации не растут.
+   Замер чистый, рост соседних чисел — реальный эффект, а не загрязнение.
+2. **Подтверждён O(n)-перебор в `LocalStorage.Store`.** Проверка уникальности
+   original_url идёт полным проходом по значениям мапы (`map_based_storage.go`,
+   перебор `s.data` без индекса). Виден по росту с preseed: 106 → 114 → 178 мкс
+   при 0 → 1k → 5k. Тот же эффект тянется в `GenerateAndStore` (114 → 140 →
+   190 мкс) и в `BatchStore` (там перебор на каждый элемент батча).
+   Кандидат №1 — индекс original_url → token: O(n) → O(1).
+3. **Методологическое примечание по Store-бенчам.** Бенчи вставки пишут записи
+   по ходу прогона: к концу замера в хранилище `b.N + preseed` записей, а
+   ns/op — средняя цена вставки в растущее хранилище. Поэтому абсолютные
+   значения зависят от benchtime (дымовой прогон на `-benchtime=10x` дал 890 нс
+   против 106 мкс здесь). Сравнение до/после корректно только при одинаковом
+   benchtime — держим значение по умолчанию в обеих точках замера.
+4. **Gzip — главная находка handler'а.** 815 КБ/оп на каждый сжатый ответ —
+   стабильная величина (совпадает с дымовым прогоном, где B/op был тем же), то
+   есть это реальные аллокации, а не прогрев: `gzip.NewWriter` создаёт на каждый
+   сжатый ответ внутренние буферы `compress/flate` — hash-таблицу (~512 КБ) и
+   окно (~32 КБ). Высокое время (207 мкс, CV 13%) — в значительной части
+   GC-давление от этого потока памяти. Кандидат №2 — `sync.Pool` для
+   gzip.Writer: снимет аллокации целиком и часть времени.
+5. **Логирование дёшево.** nop 1.9 мкс, dev_null 3.8 мкс — разница ~2 мкс —
+   цена формирования JSON-записей; `FullChain` (180 мкс) почти целиком состоит
+   из gzip, вклад логирования несущественен.
+6. **Encoding в оптимизации не нуждается.** `EncodeToBase62` — 336 нс, 4
+   аллокации; `IsValidBase62` — 11 нс, 0 аллокаций. Не трогаем.
 
 ### Нагрузка — базовая линия
 
