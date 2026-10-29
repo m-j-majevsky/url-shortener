@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	_ "net/http/pprof" // pprof-эндпоинты для профилирования (включается PPROF_ADDR)
 	"os"
 	"os/signal"
 	"sync"
@@ -64,6 +65,16 @@ func main() {
 	handlerLogger := parentLogger.With(zap.String(component, "handler"))
 	serviceLogger := parentLogger.With(zap.String(component, "service"))
 	auditLogger := parentLogger.With(zap.String(component, "audit"))
+
+	// pprof-сервер на отдельном порту — включается только переменной окружения.
+	if addr := os.Getenv("PPROF_ADDR"); addr != "" {
+		go func() {
+			mainLogger.Info("pprof-сервер запущен", zap.String("addr", addr))
+			if err := http.ListenAndServe(addr, nil); err != nil {
+				mainLogger.Warn("pprof-сервер остановлен", zap.Error(err))
+			}
+		}()
+	}
 
 	// Параметры сервиса собираются в main: конфиг самодостаточен и не знает о сервисе
 	svcConfig := service.DefaultShortenerConfig()

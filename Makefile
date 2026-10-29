@@ -22,6 +22,8 @@
 #   make lint                            # fmt + vet
 #   make clean                           # удалить бинарник и файлы покрытия
 #   make all                             # lint + build + test
+#   make bench                           # прогнать бенчмарки (encoding, service, repository, handler)
+#   make loadgen                         # собрать генератор нагрузки в ./bin/loadgen
 #
 # Миграции не требуют отдельной цели: SQL-скрипты встроены в бинарник
 # (go:embed в migrations/migrate.go) и накатываются автоматически при старте
@@ -40,7 +42,7 @@ COVER_EXCLUDE := -e '/mocks/' -e '/cmd/shortener/' -e '/migrations/'
 VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -X main.version=$(VERSION)
 
-.PHONY: all build run test test-integration test-pkg test-v cover cover-html mocks tidy fmt vet lint clean
+.PHONY: all build run test test-integration test-pkg test-v cover cover-html mocks tidy fmt vet lint bench loadgen clean
 
 # ---- Комплексные цели ----
 
@@ -104,7 +106,18 @@ vet:
 
 lint: fmt vet
 
+# ---- Бенчмарки и нагрузочное тестирование ----
+
+# Запуск бенчмарков по пакетам с bench-файлами (юнит-тесты исключены через -run='^$')
+bench:
+	go test -run='^$$' -bench=. -benchmem ./internal/encoding ./internal/service ./internal/repository ./internal/handler
+
+# Сборка генератора нагрузки (использование: bin/loadgen -mode post -n 20000 -c 50 -warmup 5000)
+loadgen:
+	go build -o bin/loadgen ./cmd/loadgen
+
 # ---- Очистка ----
+
 
 clean:
 	rm -f $(BINARY) $(COVER) $(COVER_F)
