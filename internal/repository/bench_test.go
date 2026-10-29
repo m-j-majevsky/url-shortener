@@ -78,6 +78,27 @@ func BenchmarkLocalStorage_Store(b *testing.B) {
 	}
 }
 
+// BenchmarkLocalStorage_StoreDuplicate измеряет путь проверки дубликата:
+// каждый вызов Store упирается в уже существующий original_url (фаза 409
+// в post_run2 loadgen). Токены с префиксом dup не пересекаются с preseed.
+func BenchmarkLocalStorage_StoreDuplicate(b *testing.B) {
+	for _, preseed := range []int{1000, 5000} {
+		b.Run(fmt.Sprintf("preseed_%d", preseed), func(b *testing.B) {
+			ctx := context.Background()
+			storage := NewLocalStorage()
+			preseedLocalStorage(b, storage, preseed)
+			urls := benchURLs(b, preseed)
+			runtime.GC()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				benchStoreErr = storage.Store(
+					ctx, "dup"+strconv.Itoa(i), urls[i%preseed], benchUserID)
+			}
+		})
+	}
+}
+
 // BenchmarkLocalStorage_Resolve измеряет стоимость чтения существующей
 // записи при разных объёмах хранилища — контрольная группа: должна быть
 // практически константой независимо от preseed.

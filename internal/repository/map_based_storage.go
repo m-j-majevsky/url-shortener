@@ -15,6 +15,9 @@ type (
 	// TokenToURL — отображение токена в исходный URL.
 	TokenToURL map[string]string
 
+	// URLToToken — индекс original_url -> token: O(1)-проверка уникальности URL.
+	URLToToken map[string]string
+
 	// UserToTokens — отображение пользователя в список его токенов.
 	UserToTokens map[string][]string
 
@@ -24,10 +27,18 @@ type (
 	DeletedTokens map[string]bool
 
 	// LocalStorage — хранилище в памяти с сохранением состояния в файл.
+	//
+	// Инвариант согласованности: для каждой записи data[token] == url
+	// существует byURL[url] == token, и наоборот — отображение биективно,
+	// потому что Store и BatchStore не записывают дубликаты URL.
+	// Все точки изменения data обязаны синхронно менять byURL:
+	// Store, BatchStore, DeleteByTokens, importRepr.
+	// Мягкое удаление (MarkUserURLsDeleted) обе мапы не меняет.
 	LocalStorage struct {
 		mu sync.Mutex
 
 		data    TokenToURL
+		byURL   URLToToken // индекс original_url -> token
 		users   UserToTokens
 		deleted DeletedTokens
 	}
@@ -48,6 +59,11 @@ func newTokenToURL() TokenToURL {
 	return make(map[string]string)
 }
 
+// newURLToToken создаёт пустой индекс original_url -> token.
+func newURLToToken() URLToToken {
+	return make(map[string]string)
+}
+
 // newUserToTokens создаёт пустую карту пользователь -> токены.
 func newUserToTokens() UserToTokens {
 	return make(map[string][]string)
@@ -57,6 +73,7 @@ func newUserToTokens() UserToTokens {
 func NewLocalStorage() *LocalStorage {
 	return &LocalStorage{
 		data:    newTokenToURL(),
+		byURL:   newURLToToken(),
 		users:   newUserToTokens(),
 		deleted: make(DeletedTokens),
 	}
@@ -118,6 +135,7 @@ func (s *LocalStorage) SaveToFile(path string) error {
 // importRepr перезаписывает состояние данными из файла; вызывается под s.mu.
 func (s *LocalStorage) importRepr(repr storageRepr) {
 	s.data = make(TokenToURL, len(repr))
+	s.byURL = make(URLToToken, len(repr))
 	// Перезапись состояния сбрасывает признаки удаления (аналог is_deleted)
 	s.deleted = make(DeletedTokens)
 	for _, item := range repr {
@@ -127,6 +145,7 @@ func (s *LocalStorage) importRepr(repr storageRepr) {
 			continue
 		}
 		s.data[item.ShortURL] = item.OriginalURL
+		s.byURL[item.OriginalURL] = item.ShortURL
 		s.addTokenToUser(item.ShortURL, item.UserID)
 		if item.Deleted {
 			s.deleted[item.ShortURL] = true
@@ -227,13 +246,10 @@ func (s *LocalStorage) Store(_ context.Context, token, longURL, userID string) e
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Для проверки нарушения уникальности longURL ограничусь перебором сохраненных значений,
-	// чтобы не возиться с введением дополнительного индекса (мапа longURL -> token)
-	// или другого более эффективного механизма
-	for tok, url := range s.data {
-		if url == longURL {
-			return NewErrOriginalURLExists(tok, string(url))
-		}
+	// Уникальность original_url проверяется по индексу за O(1);
+	// раньше здесь был полный перебор значений data (см. журнал, кандидат № 1).
+	if tok, ok := s.byURL[longURL]; ok {
+		return NewErrOriginalURLExists(tok, longURL)
 	}
 
 	if _, exists := s.data[token]; exists {
@@ -241,6 +257,7 @@ func (s *LocalStorage) Store(_ context.Context, token, longURL, userID string) e
 	}
 
 	s.data[token] = longURL
+	s.byURL[longURL] = token
 	s.addTokenToUser(token, userID)
 
 	return nil
@@ -283,13 +300,11 @@ func (s *LocalStorage) BatchStore(_ context.Context, batch StoreBatch, userID st
 		token := resIt.Token
 		url := resIt.OriginalURL
 
-		for t, u := range s.data {
-			if u == url {
-				// Конфликтный URL помечаем
-				resIt.ConflictedURL = true
-				// Соответствующий ему выданный ранее токен сохраняем
-				resIt.Token = t
-			}
+		if t, ok := s.byURL[url]; ok {
+			// Конфликтный URL помечаем, соответствующий ему
+			// выданный ранее токен сохраняем
+			resIt.ConflictedURL = true
+			resIt.Token = t
 		}
 
 		if resIt.ConflictedURL {
@@ -306,6 +321,7 @@ func (s *LocalStorage) BatchStore(_ context.Context, batch StoreBatch, userID st
 		} else {
 			// Запись resIt чиста, можно сохранять
 			s.data[token] = url
+			s.byURL[url] = token
 			s.addTokenToUser(token, userID)
 		}
 	}
@@ -319,6 +335,9 @@ func (s *LocalStorage) DeleteByTokens(_ context.Context, tokens []string) error 
 	defer s.mu.Unlock()
 
 	for _, token := range tokens {
+		if url, ok := s.data[token]; ok {
+			delete(s.byURL, url)
+		}
 		delete(s.data, token)
 		// Жёсткое удаление снимает и признак мягкого: после него токен
 		// отвечает 404, а не 410 — в PG строка снесена целиком

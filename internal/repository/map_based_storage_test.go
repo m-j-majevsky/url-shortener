@@ -878,3 +878,158 @@ func (suite *MapBasedDBTestSuite) TestLoadFromFile_ErrInvalidJSON() {
 	suite.Require().NoError(err)
 	suite.Equal(yandexURL, url)
 }
+
+// Кандидат №1: регрессионные кейсы индекса original_url -> token.
+// Инвариант: для каждой записи data[token]=url существует byURL[url]=token
+// и наоборот; отображение биективно, так как Store/BatchStore не записывают
+// дубликаты URL. Жёсткое удаление обязано синхронно чистить обе мапы,
+// загрузка из файла — восстанавливать индекс.
+
+func (suite *MapBasedDBTestSuite) checkIndexInvariantOn(s *LocalStorage) {
+	suite.Require().Equal(len(s.data), len(s.byURL),
+		"размеры data и byURL разошлись")
+	for tok, url := range s.data {
+		got, ok := s.byURL[url]
+		suite.Require().True(ok, "в индексе нет URL записи %s", tok)
+		suite.Require().Equal(tok, got, "индекс указывает не на свой токен")
+	}
+}
+
+func (suite *MapBasedDBTestSuite) TestStore_Success_After_Hard_Deletion() {
+	// Ключевой регрессионный кейс индекса: забытый delete(s.byURL, url)
+	// превратил бы повторное сохранение удалённого URL в фантомный конфликт
+
+	ctx := context.Background()
+
+	// Подготовка: жёсткое удаление
+	suite.Require().NoError(suite.storage.DeleteByTokens(ctx, []string{yandexToken}))
+
+	// Повторное сохранение того же URL — успех с новым токеном
+	suite.Require().NoError(suite.storage.Store(ctx, someToken, yandexURL, userID))
+
+	url, err := suite.storage.Resolve(ctx, someToken)
+	suite.Require().NoError(err)
+	suite.Equal(yandexURL, url)
+
+	// Старый токен отвечает 404, а не 410 и не отдаёт URL
+	url, err = suite.storage.Resolve(ctx, yandexToken)
+	suite.Empty(url)
+	var errTNF *ErrTokenNotFound
+	suite.ErrorAs(err, &errTNF)
+
+	suite.checkIndexInvariantOn(suite.storage)
+}
+
+func (suite *MapBasedDBTestSuite) TestBatchStore_DuplicateURLInsideBatch() {
+	// Повтор URL внутри одного пакета: первый элемент записывается
+	// и пополняет индекс, второй ловит конфликт с токеном первого
+
+	ctx := context.Background()
+
+	batch := make(StoreBatch, 0, 3)
+	batch = append(batch, StoreItem{
+		CorrelationID: "a",
+		Token:         goToken,
+		OriginalURL:   goURL, // чистая запись
+	}, StoreItem{
+		CorrelationID: "b",
+		Token:         mailToken,
+		OriginalURL:   goURL, // повтор URL внутри пакета
+	}, StoreItem{
+		CorrelationID: "c",
+		Token:         someToken,
+		OriginalURL:   someURL, // чистая запись
+	})
+
+	res, err := suite.storage.BatchStore(ctx, batch, userID)
+
+	suite.Require().Error(err)
+	var eoue *ErrOriginalURLExists
+	suite.ErrorAs(err, &eoue)
+	suite.Equal(goToken, eoue.StoredToken)
+	suite.Equal(goURL, eoue.URL)
+
+	suite.Require().Len(res, 3)
+
+	// Первый элемент записан как чистый
+	suite.False(res[0].ConflictedURL)
+	suite.False(res[0].ConflictedToken)
+	suite.Equal(goToken, res[0].Token)
+
+	// Второй ловит конфликт по URL с токеном первого
+	suite.True(res[1].ConflictedURL)
+	suite.False(res[1].ConflictedToken)
+	suite.Equal(goToken, res[1].Token)
+	suite.Equal(goURL, res[1].OriginalURL)
+	suite.Equal("b", res[1].CorrelationID)
+
+	// Третий чистый
+	suite.False(res[2].ConflictedURL)
+	suite.False(res[2].ConflictedToken)
+
+	// URL записан ровно один раз, инвариант цел
+	url, err := suite.storage.Resolve(ctx, goToken)
+	suite.Require().NoError(err)
+	suite.Equal(goURL, url)
+	suite.checkIndexInvariantOn(suite.storage)
+}
+
+func (suite *MapBasedDBTestSuite) TestSaveLoad_RoundTrip_IndexRestored() {
+	// Индекс восстанавливается при загрузке из файла; без этого
+	// проверка уникальности деградировала бы до «всё новое»
+
+	ctx := context.Background()
+
+	path := filepath.Join(suite.T().TempDir(), "state.json")
+	suite.Require().NoError(suite.storage.SaveToFile(path))
+
+	loaded := NewLocalStorage()
+	suite.Require().NoError(loaded.LoadFromFile(path))
+
+	// Дубликат уже сохранённого URL ловится после загрузки
+	err := loaded.Store(ctx, someToken, yandexURL, userID)
+	suite.Require().Error(err)
+	var eoue *ErrOriginalURLExists
+	suite.ErrorAs(err, &eoue)
+	suite.Equal(yandexToken, eoue.StoredToken)
+	suite.Equal(yandexURL, eoue.URL)
+
+	// Новый URL сохраняется и ловится повторно
+	suite.Require().NoError(loaded.Store(ctx, someToken, someURL, userID))
+	err = loaded.Store(ctx, mailToken, someURL, userID)
+	suite.Require().Error(err)
+	suite.ErrorAs(err, &eoue)
+	suite.Equal(someToken, eoue.StoredToken)
+
+	// Инвариант на загруженном хранилище
+	suite.checkIndexInvariantOn(loaded)
+}
+
+func (suite *MapBasedDBTestSuite) TestIndexInvariant_AfterMixedOperations() {
+	// Инвариант под серией разнородных операций
+
+	ctx := context.Background()
+
+	// Store
+	suite.Require().NoError(suite.storage.Store(ctx, mailToken, mailURL, userID))
+
+	// BatchStore
+	batch := make(StoreBatch, 0, 1)
+	batch = append(batch, StoreItem{
+		CorrelationID: "a",
+		Token:         goToken,
+		OriginalURL:   goURL,
+	})
+	_, err := suite.storage.BatchStore(ctx, batch, userID)
+	suite.Require().NoError(err)
+	suite.checkIndexInvariantOn(suite.storage)
+
+	// Мягкое удаление: записи в data и индексе не меняются —
+	// URL остаётся «занятым», повторный POST даёт конфликт со старым токеном
+	suite.markYandexDeleted()
+	suite.checkIndexInvariantOn(suite.storage)
+
+	// Жёсткое удаление: записи уходят из обеих мап синхронно
+	suite.Require().NoError(suite.storage.DeleteByTokens(ctx, []string{goToken, mailToken}))
+	suite.checkIndexInvariantOn(suite.storage)
+}
