@@ -9,8 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/m-j-majevsky/url-shortener/internal/auth"
 	"go.uber.org/zap"
+
+	"github.com/m-j-majevsky/url-shortener/internal/auth"
 )
 
 // responseContentTypeMiddleware устанавливает заголовок Content-Type ответа:

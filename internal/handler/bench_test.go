@@ -8,9 +8,10 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/m-j-majevsky/url-shortener/internal/logger"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/m-j-majevsky/url-shortener/internal/logger"
 )
 
 // benchBody — ~1 КБ JSON, типичный ответ /api/user/urls.

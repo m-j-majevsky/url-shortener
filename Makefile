@@ -17,9 +17,11 @@
 #   make cover-html                      # HTML-отчёт покрытия (без моков, cmd, migrations)
 #   make mocks                           # сгенерировать моки через mockery
 #   make tidy                            # go mod tidy
-#   make fmt                             # отформатировать код
+#   make fmt                             # gofmt -s -w по всем файлам проекта
+#   make fmt-imports                     # gofmt + goimports (автоустановка goimports)
+#   make fmt-check                       # проверить все файлы без правки (для CI)
 #   make vet                             # статический анализ
-#   make lint                            # fmt + vet
+#   make lint                            # fmt-imports + vet
 #   make clean                           # удалить бинарник и файлы покрытия
 #   make all                             # lint + build + test
 #   make bench                           # прогнать бенчмарки (encoding, service, repository, handler)
@@ -32,6 +34,10 @@
 
 BINARY   := bin/shortener
 MAIN_PKG := ./cmd/shortener
+
+# Инструменты форматирования
+GOFMT     := gofmt
+GOIMPORTS := goimports
 COVER    := coverage.out
 COVER_F  := coverage_filtered.out
 
@@ -42,7 +48,7 @@ COVER_EXCLUDE := -e '/mocks/' -e '/cmd/shortener/' -e '/migrations/'
 VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -X main.version=$(VERSION)
 
-.PHONY: all build run test test-integration test-pkg test-v cover cover-html mocks tidy fmt vet lint bench loadgen clean
+.PHONY: all build run test test-integration test-pkg test-v cover cover-html mocks tidy fmt fmt-imports fmt-check vet lint bench loadgen clean
 
 # ---- Комплексные цели ----
 
@@ -98,13 +104,30 @@ tidy:
 
 # ---- Качество кода ----
 
+# gofmt по всем файлам рекурсивно, включая файлы под build-тегами
+# (в отличие от `go fmt ./...`). -s — упрощения кода; уберите флаг,
+# если нужна строго каноничная gofmt-нотация без изменений логики выражений.
 fmt:
-	go fmt ./...
+	$(GOFMT) -s -w .
+
+# goimports: всё то же + приведение импортов (удаление неиспользуемых,
+# сортировка, автоимпорт). -local отделяет импорты самого модуля
+# (github.com/m-j-majevsky/url-shortener) в третью группу.
+# Утилита ставится один раз, если её нет в PATH.
+fmt-imports:
+	@command -v $(GOIMPORTS) >/dev/null 2>&1 || go install golang.org/x/tools/cmd/goimports@latest
+	$(GOIMPORTS) -local github.com/m-j-majevsky/url-shortener -w .
+
+# Проверка без правки: печатает файлы, НЕ прошедшие форматирование.
+# Пустой вывод = все файлы прошли. Удобно для CI и для сверки вручную.
+fmt-check:
+	@out="$$( $(GOFMT) -l . )"; [ -z "$$out" ] || { echo "Не отформатированы:"; echo "$$out"; exit 1; }
+	@out="$$( $(GOIMPORTS) -l -local github.com/m-j-majevsky/url-shortener . 2>/dev/null || $(GOIMPORTS) -l . )"; [ -z "$$out" ] || { echo "Импорты не в порядке:"; echo "$$out"; exit 1; }
 
 vet:
 	go vet ./...
 
-lint: fmt vet
+lint: fmt-imports vet
 
 # ---- Бенчмарки и нагрузочное тестирование ----
 

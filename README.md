@@ -83,9 +83,11 @@ URL, генерирует токен из [0-9a-zA-Z] (base62) длиной 6–
 | `make loadgen` | Собрать генератор нагрузки в `bin/loadgen` |
 | `make mocks` | Сгенерировать моки через mockery |
 | `make tidy` | `go mod tidy` |
-| `make fmt` | Отформатировать код |
+| `make fmt` | `gofmt -s -w .` — по всем файлам, включая файлы под build-тегами |
+| `make fmt-imports` | `gofmt` + `goimports`: приведение импортов (неиспользуемые удаляются, импорты модуля — в отдельную группу; `goimports` ставится автоматически, если её нет) |
+| `make fmt-check` | Проверка форматирования без правки: печатает файлы, не прошедшие gofmt/goimports, и падает с ошибкой; для CI |
 | `make vet` | Статический анализ |
-| `make lint` | `fmt` + `vet` |
+| `make lint` | `fmt-imports` + `vet` |
 | `make clean` | Удалить бинарник и файлы покрытия |
 | `make all` | `lint` + `build` + `test` |
 

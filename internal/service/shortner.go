@@ -12,11 +12,12 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/m-j-majevsky/url-shortener/internal/crypto"
 	"github.com/m-j-majevsky/url-shortener/internal/encoding"
 	"github.com/m-j-majevsky/url-shortener/internal/model"
 	"github.com/m-j-majevsky/url-shortener/internal/repository"
-	"go.uber.org/zap"
 )
 
 // ---------------------------------------------------------------------------

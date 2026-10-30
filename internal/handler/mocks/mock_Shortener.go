@@ -7,8 +7,9 @@ package mocks
 import (
 	"context"
 
-	"github.com/m-j-majevsky/url-shortener/internal/model"
 	mock "github.com/stretchr/testify/mock"
+
+	"github.com/m-j-majevsky/url-shortener/internal/model"
 )
 
 // NewMockShortener creates a new instance of MockShortener. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
