@@ -49,7 +49,7 @@ type Observer interface {
 	Send(event AuditEvent) error
 }
 
-// Notifier — часть интерфейса «субъекта», необходимая хэндлерам:
+// Notifier — часть интерфейса «субъекта», необходимая хендлерам:
 // точка диспетчеризации событий аудита. Реализуется Broadcaster'ом.
 type Notifier interface {
 	Notify(event AuditEvent)

@@ -152,7 +152,7 @@ func (c *compressReader) Close() error {
 
 // GzipMiddleware прозрачно сжимает ответы и распаковывает запросы.
 // Действует только для запросов с Content-Type text/plain или application/json:
-// для прочих тело запроса не декомпрессируется, а ответы уходят без сжатия.
+// для прочих тело запроса не распаковывается, а ответы уходят без сжатия.
 func GzipMiddleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// middleware используется только для разрешенных значений Content-Type запроса

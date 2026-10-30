@@ -33,7 +33,7 @@ type (
 	// потому что Store и BatchStore не записывают дубликаты URL.
 	// Все точки изменения data обязаны синхронно менять byURL:
 	// Store, BatchStore, DeleteByTokens, importRepr.
-	// Мягкое удаление (MarkUserURLsDeleted) обе мапы не меняет.
+	// Мягкое удаление (MarkUserURLsDeleted) оставляет неизменными обе мапы.
 	LocalStorage struct {
 		mu sync.Mutex
 
@@ -162,7 +162,7 @@ func (s *LocalStorage) addTokenToUser(tok, uid string) {
 
 	// Проверяем, существует ли ключ в мапе
 	if _, exists := s.users[uid]; !exists {
-		// Если ключа нет, создаем новый слайс
+		// Если ключа нет, создаем новый срез
 		s.users[uid] = []string{tok}
 		return
 	}
@@ -174,7 +174,7 @@ func (s *LocalStorage) addTokenToUser(tok, uid string) {
 		}
 	}
 
-	// Добавляем новое значение в конец слайса
+	// Добавляем новое значение в конец среза
 	s.users[uid] = append(s.users[uid], tok)
 }
 
@@ -191,15 +191,15 @@ func (s *LocalStorage) deleteTokenFromUsers(token string) {
 func (s *LocalStorage) deleteUsersToken(userID, tok string) {
 	// Вызывается в контексте уже захваченного s.mu
 
-	// Ищем индекс значения в слайсе
+	// Ищем индекс значения в срезе
 	ts := s.users[userID]
 	for i, t := range ts {
 		if t == tok {
 			// Сдвигаем элементы влево
 			copy(ts[i:], ts[i+1:])
-			// Обрезаем слайс
+			// Обрезаем срез
 			s.users[userID] = ts[:len(ts)-1]
-			// Если слайс стал пустым, оставляем его для дальнейшего
+			// Если срез стал пустым, оставляем его для дальнейшего
 			return
 		}
 	}

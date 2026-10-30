@@ -41,7 +41,7 @@ func (e *ErrTokenTaken) Error() string {
 	return fmt.Sprintf("занятый токен: %s", e.Token)
 }
 
-// NewErrTokenNotFound создаёт ошибку ненайденного токена.
+// NewErrTokenNotFound создаёт ошибку отсутствующего токена.
 func NewErrTokenNotFound(tok string) error {
 	return &ErrTokenNotFound{
 		Token: tok,

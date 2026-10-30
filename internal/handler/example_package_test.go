@@ -70,7 +70,7 @@ func must(err error) {
 	}
 }
 
-// Example — обзорный пример работы с HTTP API сервиса: проверка живости,
+// Example — обзорный пример работы с HTTP API сервиса: проверка доступности,
 // сокращение ссылки и переход по сокращённому адресу.
 func Example() {
 	ts := newExampleServer()
@@ -78,7 +78,7 @@ func Example() {
 
 	cli := exampleClient()
 
-	// Проверка живости сервиса.
+	// Проверка доступности сервиса.
 	resp, err := cli.Get(ts.URL + "/ping")
 	must(err)
 	fmt.Printf("GET /ping: %d\n", resp.StatusCode)

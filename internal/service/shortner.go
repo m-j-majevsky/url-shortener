@@ -26,7 +26,7 @@ import (
 // удовлетворяющие всем интерфейсам неявно.
 // ---------------------------------------------------------------------------
 
-// URLStore — сохранение одиночной записи и разворот токена.
+// URLStore — сохранение одиночной записи и обратное преобразование токена.
 type URLStore interface {
 	// Store сохраняет пару (токен, URL) для пользователя userID.
 	// Возвращает ErrOriginalURLExists, если исходный URL уже сохранён
@@ -200,7 +200,7 @@ func NewShortener(cfg ShortenerConfig) (*Shortener, error) {
 // Закрытие сериализовано с putInDeletionQueue через RWMutex:
 // отправки в очередь под read-lock завершаются раньше закрытия,
 // поэтому паника «send on closed channel» невозможна даже в сценарии,
-// когда хендлеры в полёте на момент останова сервиса.
+// когда хендлеры работают на момент останова сервиса.
 func (s *Shortener) StopItemsDeletionProcessor() {
 	s.deletionQueueMutex.Lock()
 	defer s.deletionQueueMutex.Unlock()
@@ -267,7 +267,7 @@ func (s *Shortener) generateTokens(num int) ([]string, error) {
 
 // GenerateAndStore генерирует токен и сохраняет URL с ретраями по занятым токенам.
 // Если URL уже сохранён, возвращает старый токен и ErrOriginalURLExists;
-// прочие ошибки хранилища — наверх; при исчерпании попыток — ошибка с их числом.
+// прочие ошибки хранилища возвращаются вызывающему коду; при исчерпании попыток — ошибка с их числом.
 func (s *Shortener) GenerateAndStore(ctx context.Context, longURL, userID string) (string, error) {
 	for i := 0; i < s.config.MaxStoringAttempts; i++ {
 		tokens, err := s.generateTokens(1)
@@ -424,7 +424,7 @@ func (s *Shortener) BatchStore(ctx context.Context, req model.BatchShortenReq, u
 //
 // Модифицирует первый аргумент req.
 //
-// Вызывающий код ответственен за то, чтобы в слайсе tokens было
+// Вызывающий код ответственен за то, чтобы в срезе tokens было
 // достаточно токенов для всех элементов пакета batch
 func assignTokensToStoreBatchItems(req repository.StoreBatch, tokens []string) {
 	for i := range req {

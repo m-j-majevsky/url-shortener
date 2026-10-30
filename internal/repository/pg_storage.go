@@ -1,5 +1,5 @@
 // Package repository реализует хранилища сервиса: PostgreSQL на pgx v5
-// и локальное in-memory с сохранением состояния в файл.
+// и локальное in-memory с опцией сохранения состояния в файл.
 package repository
 
 import (

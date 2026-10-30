@@ -18,7 +18,7 @@ type RandomByteProvider interface {
 
 // GenerateRandomBytes запрашивает у провайдера ровно n случайных байт.
 //
-// Возвращает слайс длины n. Если n неположительно либо провайдер вернул
+// Возвращает срез длины n. Если n неположительно либо провайдер вернул
 // ошибку или меньше n байт, возвращается ошибка.
 func GenerateRandomBytes(provider RandomByteProvider, n int) ([]byte, error) {
 	if n <= 0 {

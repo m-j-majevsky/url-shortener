@@ -1,9 +1,9 @@
-// router_gzip_test.go — тесты семантики gzip-миддлвэра с пулом писателей
+// router_gzip_test.go — тесты семантики gzip-middleware с пулом писателей
 // (sync.Pool). Дополняют TestGzipCompression из router_test.go
 // кейсами, которых там нет: отказ от сжатия ошибок и 204, переиспользование
-// писателей из пула и конкурентная работа пула (гонится под -race).
+// писателей из пула и конкурентная работа пула (запускается под -race).
 //
-// Все тесты ходят сырым http-клиентом: resty сам добавляет Accept-Encoding
+// Все тесты пользуются базовым http-клиентом: resty сам добавляет Accept-Encoding
 // и декомпрессирует ответы — с ним заголовки сжатия не проверить.
 package handler_test
 
@@ -164,7 +164,7 @@ func (s *RouterTestSuite) TestGzipPoolReuse() {
 // TestGzipPoolConcurrent — стресс-тест расщепления состояния пула:
 // 8 горутин x 25 сжатых ответов. Проверяет, что при конкуренции каждый ответ
 // декомпрессируется в свой короткий URL и несёт Content-Encoding: gzip.
-// Гонится под -race (go test -race ./internal/handler).
+// Запускается под -race (go test -race ./internal/handler).
 func (s *RouterTestSuite) TestGzipPoolConcurrent() {
 	ts, _ := s.newRealRouterServer(nil)
 

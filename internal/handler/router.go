@@ -65,7 +65,7 @@ type BatchShortURLCreator interface {
 	BatchStore(ctx context.Context, batch model.BatchShortenReq, userID string) (model.BatchShortenRes, error)
 }
 
-// ShortURLGetter — разворот короткого токена в исходный URL.
+// ShortURLGetter — обратное преобразование короткого токена в исходный URL.
 type ShortURLGetter interface {
 	Resolve(ctx context.Context, token string) (string, error)
 }
@@ -80,7 +80,7 @@ type UserURLsDeleter interface {
 	MarkUserURLsDeleted(ctx context.Context, batch model.TokensToMarkDeleted, userID string) error
 }
 
-// UndeleteFinalizer — добивка истории неудалённых токенов
+// UndeleteFinalizer — обработка неудалённых токенов
 // (запросы DELETE /api/user/urls, не поместившиеся в очередь удаления).
 type UndeleteFinalizer interface {
 	HandleErrTokenLeftUndeletedAndLogData(err error) error
@@ -250,7 +250,7 @@ func getUserIDFromContext(ctx context.Context) (string, error) {
 }
 
 // notifyAudit формирует событие аудита и отправляет его во все доступные
-// приёмники (паттерн «Наблюдатель»). Вызывается хэндлерами после успешной
+// приёмники (паттерн «Наблюдатель»). Вызывается хендлерами после успешной
 // обработки запроса. Если аудит не настроен (auditor == nil), метод ничего не делает.
 func (rt *Router) notifyAudit(action, userID, url string) {
 	if rt.auditor == nil {

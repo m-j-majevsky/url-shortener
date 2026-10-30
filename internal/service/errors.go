@@ -30,7 +30,7 @@ type (
 
 // Методы ErrTokenNotFound
 
-// NewErrTokenNotFound создаёт ошибку ненайденного токена.
+// NewErrTokenNotFound создаёт ошибку отсутствующего токена.
 func NewErrTokenNotFound(tok string) error {
 	return &ErrTokenNotFound{
 		Token: tok,

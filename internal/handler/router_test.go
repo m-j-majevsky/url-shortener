@@ -8,7 +8,7 @@
 //     числом вызовов. Незапланированный вызов сервиса уронит тест паникой.
 //
 // Покрытие: маршруты и коды ответов всех эндпоинтов, ошибки CookieMiddleware,
-// аудит (шортен/фоллоу, включён и выключен), gzip (сжатие ответов, распаковка
+// аудит (сокращение/переход, включён и выключен), gzip (сжатие ответов, распаковка
 // запросов, отказ от сжатия ошибок), лимиты размера тел, валидация токенов.
 package handler_test
 
@@ -199,7 +199,7 @@ func (f *fakeNotifier) snapshot() []audit.AuditEvent {
 }
 
 // -----------------------------------------------------------------------------------------------
-// Матрица маршрутов на реальном сервисе (в стиле bak)
+// Матрица маршрутов на реальном сервисе
 // -----------------------------------------------------------------------------------------------
 
 func (s *RouterTestSuite) TestWebhook() {
@@ -1011,7 +1011,7 @@ func (s *RouterTestSuite) TestAudit() {
 	obs := &fakeNotifier{}
 	ts, _ := s.newRealRouterServer(obs)
 
-	// Шортен-события: и на 201, и на 409
+	// События сокращения: и на 201, и на 409
 	_, err := resty.New().R().SetBody("http://audit.one.io").Post(ts.URL + "/")
 	s.Require().NoError(err)
 	_, err = resty.New().R().SetBody(yandexLongURL).Post(ts.URL + "/")
@@ -1021,7 +1021,7 @@ func (s *RouterTestSuite) TestAudit() {
 	s.Require().Len(events, 2, "аудит отправляется и на 201, и на 409")
 	for _, e := range events {
 		s.Equal(audit.ActionShorten, e.Action)
-		s.NotEmpty(e.UserID, "шортен проходит через CookieMiddleware: user_id известен")
+		s.NotEmpty(e.UserID, "сокращение проходит через CookieMiddleware: user_id известен")
 		s.NotEmpty(e.URL)
 	}
 	s.Equal("http://audit.one.io", events[0].URL)

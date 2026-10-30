@@ -48,7 +48,7 @@ func (s *EncodingSuite) TestEncodeToBase62_SingleByte_MaxBase62Char() {
 func (s *EncodingSuite) TestEncodeToBase62_TwoBytes_KnownValue() {
 	// Возьмём число, которое легко проверить вручную.
 	// Например, 62 в десятичной = "10" в Base62.
-	// В байтах: 62 = [0, 62] в big-endian, но SetBytes трактует слайс как big-endian.
+	// В байтах: 62 = [0, 62] в big-endian, но SetBytes трактует срез как big-endian.
 	n := 62
 	data := []byte{byte(n >> 8), byte(n)}
 	result := EncodeToBase62(data)

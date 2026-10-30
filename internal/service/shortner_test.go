@@ -1246,7 +1246,7 @@ func (s *ShortenerSuite) TestNewUndeletedItemsFromReqBatch() {
 
 // Хелперы
 
-// unwrapErrors нормализует ошибку в плоский список: joined — слайс,
+// unwrapErrors нормализует ошибку в плоский список: joined — срез,
 // одиночная — список из одного элемента.
 func unwrapErrors(err error) []error {
 	if err == nil {

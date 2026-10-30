@@ -10,20 +10,20 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-// Initialize создаёт логер с необходимым уровнем логирования и возвращает его.
+// Initialize создаёт логгер с необходимым уровнем логирования и возвращает его.
 func Initialize(level string) (*zap.Logger, error) {
 	// преобразуем текстовый уровень логирования в zap.AtomicLevel
 	lvl, err := zap.ParseAtomicLevel(level)
 	if err != nil {
 		return nil, err
 	}
-	// создаём новую конфигурацию логера
+	// создаём новую конфигурацию логгера
 	cfg := zap.NewProductionConfig()
 	// устанавливаем уровень
 	cfg.Level = lvl
 	// настраиваем привычный формат логирования времени в UTC
 	cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-	// создаём логер на основе конфигурации
+	// создаём логгер на основе конфигурации
 	zl, err := cfg.Build()
 	if err != nil {
 		return nil, err

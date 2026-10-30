@@ -32,7 +32,7 @@ func exampleClient() *http.Client {
 	}
 }
 
-// Example_shortenText — текстовый API: URL передается телом POST-запроса
+// Example_shortenText — текстовый API: URL передаётся телом POST-запроса
 // на "/", ответ — сокращённая ссылка в чистом виде. Повторная отправка
 // той же ссылки отвечает 409 Conflict с той же короткой ссылкой.
 func Example_shortenText() {
