@@ -1,3 +1,6 @@
+// Package config собирает конфигурацию сервиса: значения по умолчанию,
+// флаги командной строки и переменные окружения; переменные окружения
+// перекрывают флаги.
 package config
 
 import (
@@ -125,8 +128,10 @@ func readApplicationConfig() (ApplicationConfig, error) {
 	return cfg, nil
 }
 
-// sentinel-значение вводится для обработки отсутствия переменной окружения
-// в тестах (GitHub Actions) платформы Практикума Яндекс.
+// ErrEmptySigningKey — сигнальная (sentinel) ошибка: ключ подписи JWT
+// не задан, переменная окружения SIGNING_KEY отсутствует или пуста.
+// Вызывающий код распознаёт её через errors.Is — например, cmd/shortener
+// в этом случае подставляет резервный ключ по умолчанию.
 var ErrEmptySigningKey = errors.New("SIGNING_KEY не задан (используйте переменную окружения SIGNING_KEY)")
 
 // validateApplicationConfig — слой валидации: проверяет, что обязательные

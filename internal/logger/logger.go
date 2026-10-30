@@ -1,3 +1,5 @@
+// Package logger инициализирует zap-логгер сервиса: production-конфигурация,
+// уровень логирования задаётся строкой, время — в UTC (формат ISO8601).
 package logger
 
 import (

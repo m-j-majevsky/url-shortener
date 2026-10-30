@@ -113,7 +113,9 @@ func (s *LocalStorage) findUserByToken(tok string) string {
 	return ""
 }
 
-// Сохраняет текущее состояние Storage в JSON-файл.
+// SaveToFile сохраняет текущее состояние хранилища в JSON-файл
+// по пути path. Чтение состояния выполняется под блокировкой,
+// поэтому в файл не попадут частично изменённые данные.
 func (s *LocalStorage) SaveToFile(path string) error {
 	// Блокировка нужна, чтобы не читать частично изменённые данные из data.
 	s.mu.Lock()
@@ -221,8 +223,9 @@ func (s *LocalStorage) isTokenBelongsToUser(tok, userID string) bool {
 	return false
 }
 
-// Загружает данные из JSON-файла и заменяет ими текущее содержимое data.
-// Важно: эта функция перезаписывает мапу, а не мёржит её.
+// LoadFromFile загружает данные из JSON-файла и заменяет ими текущее
+// содержимое data. Мапа перезаписывается, а не мёржится: содержимое
+// файла после успешного чтения полностью замещает состояние хранилища.
 func (s *LocalStorage) LoadFromFile(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -240,8 +243,10 @@ func (s *LocalStorage) LoadFromFile(path string) error {
 	return nil
 }
 
-// Сохраняет longURL под токеном. Возвращает ErrTokenTaken, если токен занят.
-// Вызывающий код должен гарантировать отсутствие пустых token или longURL.
+// Store сохраняет longURL под токеном. Возвращает ErrOriginalURLExists,
+// если longURL уже сохранён под другим токеном (в том числе удалённым),
+// и ErrTokenTaken, если токен уже занят. Вызывающий код должен
+// гарантировать отсутствие пустых token или longURL.
 func (s *LocalStorage) Store(_ context.Context, token, longURL, userID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -283,10 +288,14 @@ func (s *LocalStorage) Resolve(_ context.Context, token string) (string, error) 
 	return url, nil
 }
 
-// Важно:
-// Гарантировать уникальность StoreBatch.Token среди элементов параметра batch,
-// а также гарантировать отсутствие пустых StoreBatch.Token или StoreBatch.OriginalURL,
-// это ответственность вызывающего кода!
+// BatchStore сохраняет пакет записей и возвращает его копию с признаками
+// конфликтов: ConflictedToken — токен уже занят; ConflictedURL — URL уже
+// сохранён под выданным ранее токеном (в этом случае элементу
+// возвращается существующий токен, данные не записываются).
+//
+// Важно: гарантировать уникальность StoreBatch.Token среди элементов
+// параметра batch, а также отсутствие пустых StoreBatch.Token и
+// StoreBatch.OriginalURL — это ответственность вызывающего кода!
 func (s *LocalStorage) BatchStore(_ context.Context, batch StoreBatch, userID string) (StoreBatch, error) {
 	result := make(StoreBatch, len(batch))
 	copy(result, batch)

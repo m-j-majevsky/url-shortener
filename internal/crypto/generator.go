@@ -1,3 +1,6 @@
+// Package crypto предоставляет источники криптографически стойких
+// случайных байтов: интерфейс RandomByteProvider, реализацию поверх
+// crypto/rand и генерацию ровно n байт от выбранного провайдера.
 package crypto
 
 import (
@@ -5,12 +8,18 @@ import (
 	"io"
 )
 
-// Абстрагирует источник случайных байт.
+// RandomByteProvider абстрагирует источник случайных байт — например,
+// криптографически стойкий (см. CryptoRandProvider).
 type RandomByteProvider interface {
+	// Read заполняет p случайными байтами и возвращает число записанных
+	// байт и ошибку (контракт io.Reader).
 	Read(p []byte) (n int, err error)
 }
 
-// Запрашивает у провайдера ровно n байт.
+// GenerateRandomBytes запрашивает у провайдера ровно n случайных байт.
+//
+// Возвращает слайс длины n. Если n неположительно либо провайдер вернул
+// ошибку или меньше n байт, возвращается ошибка.
 func GenerateRandomBytes(provider RandomByteProvider, n int) ([]byte, error) {
 	if n <= 0 {
 		return nil, errors.New("запрашиваемая длина последовательности должна быть положительной")

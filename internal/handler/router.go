@@ -1,3 +1,7 @@
+// Package handler содержит HTTP-обработчики сервиса и сборку маршрутов:
+// сокращение ссылок по одной и батчем, редирект, список и удаление
+// ссылок пользователя, проверку доступности БД; поверх маршрутов —
+// middleware cookie-аутентификации и сжатия gzip.
 package handler
 
 import (
@@ -24,9 +28,12 @@ import (
 )
 
 const (
+	// ContentType — имя HTTP-заголовка Content-Type.
 	ContentType = "Content-Type"
-	AppJSON     = "application/json"
-	TextPlain   = "text/plain"
+	// AppJSON — значение Content-Type для JSON-тела.
+	AppJSON = "application/json"
+	// TextPlain — значение Content-Type для текстового тела.
+	TextPlain = "text/plain"
 
 	pingPath = "/ping"
 
@@ -257,8 +264,7 @@ func (rt *Router) notifyAudit(action, userID, url string) {
 	})
 }
 
-// Путь "/ping", GET
-
+// pingDB обрабатывает GET /ping: проверяет доступность хранилища.
 func (rt *Router) pingDB(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), procTimeout)
 	defer cancel()
@@ -273,8 +279,9 @@ func (rt *Router) pingDB(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// Путь "/{token}", GET
-
+// resolveShortURL обрабатывает GET /{token}: возвращает редирект 307
+// на исходный URL; 400 — некорректный или неизвестный токен,
+// 410 — ссылка удалена.
 func (rt *Router) resolveShortURL(w http.ResponseWriter, r *http.Request) {
 	token := chi.URLParam(r, "token")
 	if err := enc.IsValidBase62(token); err != nil {
@@ -317,8 +324,8 @@ func (rt *Router) resolveShortURL(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 }
 
-// Путь "/", POST (текстовый api)
-
+// shortenLongURLForText обрабатывает POST "/": сокращение одной ссылки,
+// переданной текстом в теле запроса.
 func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) {
 	userID, err := getUserIDFromContext(r.Context())
 	if err != nil {
@@ -373,8 +380,8 @@ func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) 
 	rt.notifyAudit(audit.ActionShorten, userID, body)
 }
 
-// Путь "/api/shorten", POST
-
+// shortenLongURLForJSON обрабатывает POST /api/shorten: сокращение
+// одной ссылки из JSON-тела запроса.
 func (rt *Router) shortenLongURLForJSON(w http.ResponseWriter, r *http.Request) {
 	userID, err := getUserIDFromContext(r.Context())
 	if err != nil {
@@ -446,8 +453,8 @@ func (rt *Router) shortenLongURLForJSON(w http.ResponseWriter, r *http.Request) 
 	rt.notifyAudit(audit.ActionShorten, userID, req.URL)
 }
 
-// Путь "/api/shorten/batch", POST
-
+// shortenBatch обрабатывает POST /api/shorten/batch: пакетное сокращение
+// ссылок из JSON-тела запроса.
 func (rt *Router) shortenBatch(w http.ResponseWriter, r *http.Request) {
 	userID, err := getUserIDFromContext(r.Context())
 	if err != nil {
@@ -527,8 +534,8 @@ func setBaseForShortenBatch(baseURL string, batch model.BatchShortenRes) {
 	}
 }
 
-// Путь "/api/user/urls", GET
-
+// getUserURLs обрабатывает GET /api/user/urls: список сокращённых
+// ссылок пользователя.
 func (rt *Router) getUserURLs(w http.ResponseWriter, r *http.Request) {
 	userID, err := getUserIDFromContext(r.Context())
 	if err != nil {
@@ -583,8 +590,8 @@ func setBaseForUserURLs(baseURL string, res model.UserURLsRes) {
 	}
 }
 
-// Путь "/api/user/urls", DELETE
-
+// markUserURLsDeleted обрабатывает DELETE /api/user/urls: постановка
+// токенов пользователя в очередь на удаление.
 func (rt *Router) markUserURLsDeleted(w http.ResponseWriter, r *http.Request) {
 	userID, err := getUserIDFromContext(r.Context())
 	if err != nil {

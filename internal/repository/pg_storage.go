@@ -131,9 +131,13 @@ func (s *pgStorage) Ping(ctx context.Context) error {
 	return s.db.Ping(ctx)
 }
 
-// Важно:
-// Гарантировать уникальность StoreBatch.Token среди элементов параметра batch,
-// это ответственность вызывающего кода!
+// BatchStore сохраняет пакет записей в одной транзакции с подготовленным
+// запросом. Конфликт по original_url возвращает существующий токен
+// в элементе результата с признаком ConflictedURL, конфликт по токену —
+// признак ConflictedToken.
+//
+// Важно: гарантировать уникальность StoreBatch.Token среди элементов
+// параметра batch — это ответственность вызывающего кода!
 func (s *pgStorage) BatchStore(ctx context.Context, batchReq StoreBatch, userID string) (StoreBatch, error) {
 	if len(batchReq) == 0 {
 		return StoreBatch{}, nil

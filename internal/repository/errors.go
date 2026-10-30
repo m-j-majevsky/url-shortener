@@ -3,17 +3,21 @@ package repository
 import "fmt"
 
 type (
-	// Ошибка, когда сохраняемый токен уже выдан другому URL'у
+	// ErrTokenTaken — сохраняемый токен уже выдан другому URL.
+	// Возвращается Store и BatchStore при конфликте по токену.
 	ErrTokenTaken struct {
 		Token string
 	}
 
-	// Ошибка, если запрашиваемый токен не найден
+	// ErrTokenNotFound — запрашиваемый токен в хранилище не найден.
+	// Возвращается Resolve.
 	ErrTokenNotFound struct {
 		Token string
 	}
 
-	// Ошибка, когда сокращаемый URL уже есть в хранилище
+	// ErrOriginalURLExists — сокращаемый URL уже сохранён в хранилище
+	// под другим токеном StoredToken. Возвращается Store и BatchStore
+	// при конфликте по original_url.
 	ErrOriginalURLExists struct {
 		StoredToken string
 		URL         string
@@ -24,8 +28,6 @@ type (
 		Token string
 	}
 )
-
-// Методы ErrTokenTaken
 
 // NewErrTokenTaken создаёт ошибку занятого токена.
 func NewErrTokenTaken(token string) error {
@@ -39,8 +41,6 @@ func (e *ErrTokenTaken) Error() string {
 	return fmt.Sprintf("занятый токен: %s", e.Token)
 }
 
-// Методы ErrTokenNotFound
-
 // NewErrTokenNotFound создаёт ошибку ненайденного токена.
 func NewErrTokenNotFound(tok string) error {
 	return &ErrTokenNotFound{
@@ -52,8 +52,6 @@ func NewErrTokenNotFound(tok string) error {
 func (e *ErrTokenNotFound) Error() string {
 	return fmt.Sprintf("токен %s не найден", e.Token)
 }
-
-// Методы ErrOriginalURLExists
 
 // NewErrOriginalURLExists создаёт ошибку конфликта: URL уже сохранён под StoredToken.
 func NewErrOriginalURLExists(token, url string) error {
@@ -67,8 +65,6 @@ func NewErrOriginalURLExists(token, url string) error {
 func (e *ErrOriginalURLExists) Error() string {
 	return fmt.Sprintf("URL %s сохранен под токеном %s", e.URL, e.StoredToken)
 }
-
-// Методы ErrTokenIsDeleted
 
 // NewErrTokenIsDeleted создаёт ошибку удалённого токена.
 func NewErrTokenIsDeleted(tok string) error {
