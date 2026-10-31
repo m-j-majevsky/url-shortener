@@ -35,6 +35,6 @@ vendor/
 # Rest files
 batch_req.json
 emergency_dead_letter.log
-storage_state.json
+storage_state.*
 audit.json
 

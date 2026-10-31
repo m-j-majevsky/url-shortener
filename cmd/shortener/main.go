@@ -96,7 +96,8 @@ func main() {
 	// отказать запуск немедленно, а не быть обнаруженным молча в момент первого
 	// сбоя хранилища. Побочный эффект — пустой файл создаётся сразу: оператору
 	// видно, куда пишется журнал.
-	if err := probeDeadLetterFile(cfg.DeadLetterLogFile); err != nil {
+	svcConfig.DeadLetterLogFile = cfg.DeadLetterLogFile
+	if err := probeDeadLetterFile(svcConfig.DeadLetterLogFile); err != nil {
 		mainLogger.Fatal(err.Error(), zap.String("event", "probing dead-letter file"))
 	}
 	mainLogger.Info("dead-letter-файл готов к записи", zap.String("path", cfg.DeadLetterLogFile))
