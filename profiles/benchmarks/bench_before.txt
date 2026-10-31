@@ -1,0 +1,40 @@
+go test -run='^$' -bench=. -benchmem ./internal/encoding ./internal/service ./internal/repository ./internal/handler
+goos: linux
+goarch: amd64
+pkg: github.com/m-j-majevsky/url-shortener/internal/encoding
+cpu: Intel(R) Core(TM) i7-8850H CPU @ 2.60GHz
+BenchmarkEncodeToBase62 	 3504954	       313.2 ns/op	      32 B/op	       4 allocs/op
+BenchmarkIsValidBase62  	100000000	        10.30 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/m-j-majevsky/url-shortener/internal/encoding	2.574s
+goos: linux
+goarch: amd64
+pkg: github.com/m-j-majevsky/url-shortener/internal/service
+cpu: Intel(R) Core(TM) i7-8850H CPU @ 2.60GHz
+BenchmarkGenerateAndStore/preseed=0         	   10000	    113994 ns/op	         1.000 store-attempts/op	     261 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=1k        	   10000	    130337 ns/op	         1.000 store-attempts/op	     241 B/op	       6 allocs/op
+BenchmarkGenerateAndStore/preseed=5k        	   10000	    181840 ns/op	         1.000 store-attempts/op	     355 B/op	       6 allocs/op
+PASS
+ok  	github.com/m-j-majevsky/url-shortener/internal/service	5.194s
+goos: linux
+goarch: amd64
+pkg: github.com/m-j-majevsky/url-shortener/internal/repository
+cpu: Intel(R) Core(TM) i7-8850H CPU @ 2.60GHz
+BenchmarkLocalStorage_Store/preseed_0         	   12667	     97915 ns/op	     189 B/op	       2 allocs/op
+BenchmarkLocalStorage_Store/preseed_1000      	   10000	    107240 ns/op	     193 B/op	       1 allocs/op
+BenchmarkLocalStorage_Store/preseed_5000      	   10000	    165278 ns/op	     306 B/op	       2 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_1000    	13604745	        87.88 ns/op	       7 B/op	       1 allocs/op
+BenchmarkLocalStorage_Resolve/preseed_5000    	10854590	        99.43 ns/op	      14 B/op	       1 allocs/op
+PASS
+ok  	github.com/m-j-majevsky/url-shortener/internal/repository	9.275s
+goos: linux
+goarch: amd64
+pkg: github.com/m-j-majevsky/url-shortener/internal/handler
+cpu: Intel(R) Core(TM) i7-8850H CPU @ 2.60GHz
+BenchmarkGzipMiddleware/no_gzip         	  771260	      1435 ns/op	    2992 B/op	       9 allocs/op
+BenchmarkGzipMiddleware/gzip            	    7112	    162554 ns/op	  815312 B/op	      30 allocs/op
+BenchmarkLoggingMiddleware/nop          	  659065	      1744 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkLoggingMiddleware/dev_null     	  327654	      3592 ns/op	    3352 B/op	      13 allocs/op
+BenchmarkFullChain                      	    6600	    155379 ns/op	  815672 B/op	      34 allocs/op
+PASS
+ok  	github.com/m-j-majevsky/url-shortener/internal/handler	7.667s

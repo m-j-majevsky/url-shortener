@@ -2,11 +2,11 @@ package repository
 
 import (
 	"errors"
-
-	"github.com/m-j-majevsky/url-shortener/internal/model"
 )
 
 type (
+	// StoreItem — элемент пакета на сохранение: (токен, URL, пользователь)
+	// и признаки конфликтов (ConflictedToken, ConflictedURL).
 	StoreItem struct {
 		CorrelationID   string
 		Token           string
@@ -15,27 +15,32 @@ type (
 		ConflictedURL   bool
 	}
 
+	// StoreBatch — пакет на сохранение.
 	StoreBatch []StoreItem
 
+	// ToMarkDeletedReqItem — запрос на мягкое удаление токена от имени пользователя.
 	ToMarkDeletedReqItem struct {
-		Token  string `json:"token"`
-		UserID string `json:"user_id"`
+		Token  string
+		UserID string
 	}
 
+	// ToMarkDeletedReqBatch — пакет запросов на мягкое удаление.
 	ToMarkDeletedReqBatch []ToMarkDeletedReqItem
+
+	// UserURL — запись о коротком URL пользователя.
+	UserURL struct {
+		ShortURL    string `db:"token"`
+		OriginalURL string `db:"original_url"`
+	}
+
+	// UserURLs — список записей о коротких URL пользователя.
+	UserURLs []UserURL
 )
 
 // Методы и утилиты для работы с StoreBatch
 
-func NewStoreBatch(req model.BatchShortenReq) StoreBatch {
-	result := make(StoreBatch, len(req))
-	for i := range req {
-		result[i].CorrelationID = req[i].CorrelationID
-		result[i].OriginalURL = req[i].OriginalURL
-	}
-	return result
-}
-
+// MayBeAddErrors собирает признаки конфликтов пакета (занятые токены,
+// уже существующие URL) в один joined error.
 func MayBeAddErrors(batch StoreBatch) (StoreBatch, error) {
 	errs := make([]error, 0, len(batch))
 

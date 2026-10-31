@@ -1,0 +1,34 @@
+template: testify
+formatter: goimports
+packages:
+  github.com/m-j-majevsky/url-shortener/internal/service:
+    interfaces:
+      URLStore:
+      BatchURLStore:
+      UserURLsStore:
+      UserStore:
+      StorageCleaner:
+      StoragePinger:
+      Storage:
+    config:
+      dir: "{{.InterfaceDir}}/mocks"
+      filename: "mock_{{.InterfaceName}}.go"
+      pkgname: mocks
+      structname: "Mock{{.InterfaceName}}"
+  github.com/m-j-majevsky/url-shortener/internal/handler:
+    interfaces:
+      ShortURLCreator:
+      BatchShortURLCreator:
+      ShortURLGetter:
+      UserURLsLister:
+      UserURLsDeleter:
+      UndeleteFinalizer:
+      Pinger:
+      UserRegistrator:
+      Shortener:
+    config:
+      dir: "{{.InterfaceDir}}/mocks"
+      filename: "mock_{{.InterfaceName}}.go"
+      pkgname: mocks
+      structname: "Mock{{.InterfaceName}}" 
+  

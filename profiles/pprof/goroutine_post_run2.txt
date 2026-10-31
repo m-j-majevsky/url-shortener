@@ -1,0 +1,114 @@
+goroutine profile: total 16
+4 @ 0x48b30e 0x44cb57 0x48a4e5 0x4e3c27 0x4e48ce 0x4e48bc 0x5654c5 0x56ef85 0x6744f3 0x492c81
+#	0x48a4e4	internal/poll.runtime_pollWait+0x84		/usr/local/go/src/runtime/netpoll.go:351
+#	0x4e3c26	internal/poll.(*pollDesc).wait+0x26		/usr/local/go/src/internal/poll/fd_poll_runtime.go:84
+#	0x4e48cd	internal/poll.(*pollDesc).waitRead+0x2ad	/usr/local/go/src/internal/poll/fd_poll_runtime.go:89
+#	0x4e48bb	internal/poll.(*FD).Read+0x29b			/usr/local/go/src/internal/poll/fd_unix.go:165
+#	0x5654c4	net.(*netFD).Read+0x24				/usr/local/go/src/net/fd_posix.go:68
+#	0x56ef84	net.(*conn).Read+0x44				/usr/local/go/src/net/net.go:196
+#	0x6744f2	net/http.(*connReader).backgroundRead+0x32	/usr/local/go/src/net/http/server.go:702
+
+2 @ 0x48b30e 0x468712 0x4686e9 0x48c825 0x49a25d 0x89b8ec 0x89b8be 0x89b8bd 0x8900f5 0x8925a2 0x8ac5c8 0x8e6e14 0x67c3c9 0x8d1962 0x8e5365 0x69986e 0x67a830 0x492c81
+#	0x48c824	internal/sync.runtime_SemacquireMutex+0x24							/usr/local/go/src/runtime/sema.go:95
+#	0x49a25c	internal/sync.(*Mutex).lockSlow+0x15c								/usr/local/go/src/internal/sync/mutex.go:149
+#	0x89b8eb	internal/sync.(*Mutex).Lock+0x4b								/usr/local/go/src/internal/sync/mutex.go:70
+#	0x89b8bd	sync.(*Mutex).Lock+0x1d										/usr/local/go/src/sync/mutex.go:46
+#	0x89b8bc	go.uber.org/zap/zapcore.(*lockedWriteSyncer).Write+0x1c						/home/nosov/go/pkg/mod/go.uber.org/zap@v1.28.0/zapcore/write_syncer.go:65
+#	0x8900f4	go.uber.org/zap/zapcore.(*ioCore).Write+0xd4							/home/nosov/go/pkg/mod/go.uber.org/zap@v1.28.0/zapcore/core.go:99
+#	0x8925a1	go.uber.org/zap/zapcore.(*CheckedEntry).Write+0x361						/home/nosov/go/pkg/mod/go.uber.org/zap@v1.28.0/zapcore/entry.go:276
+#	0x8ac5c7	go.uber.org/zap.(*Logger).Info+0x47								/home/nosov/go/pkg/mod/go.uber.org/zap@v1.28.0/logger.go:247
+#	0x8e6e13	github.com/m-j-majevsky/url-shortener/internal/handler.NewRouter.WithLogging.func2.1+0x413	/home/nosov/go-pro/url-shortener/internal/logger/logger.go:80
+#	0x67c3c8	net/http.HandlerFunc.ServeHTTP+0x28								/usr/local/go/src/net/http/server.go:2286
+#	0x8d1961	github.com/go-chi/chi/v5.(*Mux).ServeHTTP+0x321							/home/nosov/go/pkg/mod/github.com/go-chi/chi/v5@v5.3.1/mux.go:90
+#	0x8e5364	github.com/m-j-majevsky/url-shortener/internal/handler.(*Router).ServeHTTP+0x24			/home/nosov/go-pro/url-shortener/internal/handler/router.go:160
+#	0x69986d	net/http.serverHandler.ServeHTTP+0x8d								/usr/local/go/src/net/http/server.go:3311
+#	0x67a82f	net/http.(*conn).serve+0x64f									/usr/local/go/src/net/http/server.go:2073
+
+1 @ 0x421329 0x48d578 0x6f01d3 0x492c81
+#	0x48d577	os/signal.signal_recv+0x97	/usr/local/go/src/runtime/sigqueue.go:152
+#	0x6f01d2	os/signal.loop+0x12		/usr/local/go/src/os/signal/signal_unix.go:23
+
+1 @ 0x449671 0x48a13d 0x6d31f1 0x6d3025 0x6cfea9 0x6ea14a 0x6eabda 0x67c3c9 0x67e167 0x69986e 0x67a830 0x492c81
+#	0x6d31f0	runtime/pprof.writeRuntimeProfile+0xb0	/usr/local/go/src/runtime/pprof/pprof.go:851
+#	0x6d3024	runtime/pprof.writeGoroutine+0x44	/usr/local/go/src/runtime/pprof/pprof.go:784
+#	0x6cfea8	runtime/pprof.(*Profile).WriteTo+0x148	/usr/local/go/src/runtime/pprof/pprof.go:408
+#	0x6ea149	net/http/pprof.handler.ServeHTTP+0x529	/usr/local/go/src/net/http/pprof/pprof.go:273
+#	0x6eabd9	net/http/pprof.Index+0xd9		/usr/local/go/src/net/http/pprof/pprof.go:397
+#	0x67c3c8	net/http.HandlerFunc.ServeHTTP+0x28	/usr/local/go/src/net/http/server.go:2286
+#	0x67e166	net/http.(*ServeMux).ServeHTTP+0x1c6	/usr/local/go/src/net/http/server.go:2828
+#	0x69986d	net/http.serverHandler.ServeHTTP+0x8d	/usr/local/go/src/net/http/server.go:3311
+#	0x67a82f	net/http.(*conn).serve+0x64f		/usr/local/go/src/net/http/server.go:2073
+
+1 @ 0x48b30e 0x44cb57 0x48a4e5 0x4e3c27 0x4e53ec 0x4e53da 0x566409 0x576b5b 0x575f50 0x67faec 0x67f6d2 0x8fd685 0x492c81
+#	0x48a4e4	internal/poll.runtime_pollWait+0x84		/usr/local/go/src/runtime/netpoll.go:351
+#	0x4e3c26	internal/poll.(*pollDesc).wait+0x26		/usr/local/go/src/internal/poll/fd_poll_runtime.go:84
+#	0x4e53eb	internal/poll.(*pollDesc).waitRead+0x28b	/usr/local/go/src/internal/poll/fd_poll_runtime.go:89
+#	0x4e53d9	internal/poll.(*FD).Accept+0x279		/usr/local/go/src/internal/poll/fd_unix.go:613
+#	0x566408	net.(*netFD).accept+0x28			/usr/local/go/src/net/fd_unix.go:150
+#	0x576b5a	net.(*TCPListener).accept+0x1a			/usr/local/go/src/net/tcpsock_posix.go:159
+#	0x575f4f	net.(*TCPListener).Accept+0x2f			/usr/local/go/src/net/tcpsock.go:387
+#	0x67faeb	net/http.(*Server).Serve+0x30b			/usr/local/go/src/net/http/server.go:3434
+#	0x67f6d1	net/http.(*Server).ListenAndServe+0x71		/usr/local/go/src/net/http/server.go:3360
+#	0x8fd684	main.main.func4+0x24				/home/nosov/go-pro/url-shortener/cmd/shortener/main.go:213
+
+1 @ 0x48b30e 0x44cb57 0x48a4e5 0x4e3c27 0x4e53ec 0x4e53da 0x566409 0x576b5b 0x575f50 0x67faec 0x67f6d2 0x8fda70 0x8fda71 0x492c81
+#	0x48a4e4	internal/poll.runtime_pollWait+0x84		/usr/local/go/src/runtime/netpoll.go:351
+#	0x4e3c26	internal/poll.(*pollDesc).wait+0x26		/usr/local/go/src/internal/poll/fd_poll_runtime.go:84
+#	0x4e53eb	internal/poll.(*pollDesc).waitRead+0x28b	/usr/local/go/src/internal/poll/fd_poll_runtime.go:89
+#	0x4e53d9	internal/poll.(*FD).Accept+0x279		/usr/local/go/src/internal/poll/fd_unix.go:613
+#	0x566408	net.(*netFD).accept+0x28			/usr/local/go/src/net/fd_unix.go:150
+#	0x576b5a	net.(*TCPListener).accept+0x1a			/usr/local/go/src/net/tcpsock_posix.go:159
+#	0x575f4f	net.(*TCPListener).Accept+0x2f			/usr/local/go/src/net/tcpsock.go:387
+#	0x67faeb	net/http.(*Server).Serve+0x30b			/usr/local/go/src/net/http/server.go:3434
+#	0x67f6d1	net/http.(*Server).ListenAndServe+0x71		/usr/local/go/src/net/http/server.go:3360
+#	0x8fda6f	net/http.ListenAndServe+0x14f			/usr/local/go/src/net/http/server.go:3675
+#	0x8fda70	main.main.func1+0x150				/home/nosov/go-pro/url-shortener/cmd/shortener/main.go:73
+
+1 @ 0x48b30e 0x467885 0x6efcbc 0x492c81
+#	0x6efcbb	os/signal.NotifyContext.func1+0x7b	/usr/local/go/src/os/signal/signal.go:292
+
+1 @ 0x48b30e 0x467885 0x8e3351 0x8fd70f 0x492c81
+#	0x8e3350	github.com/m-j-majevsky/url-shortener/internal/service.(*Shortener).StartItemsDeletionProcessor+0x270	/home/nosov/go-pro/url-shortener/internal/service/shortener.go:632
+#	0x8fd70e	main.main.func3+0x4e											/home/nosov/go-pro/url-shortener/cmd/shortener/main.go:197
+
+1 @ 0x48b30e 0x467885 0x8fcb74 0x4540b5 0x492c81
+#	0x8fcb73	main.main+0x21f3	/home/nosov/go-pro/url-shortener/cmd/shortener/main.go:217
+#	0x4540b4	runtime.main+0x2d4	/usr/local/go/src/runtime/proc.go:290
+
+1 @ 0x48b30e 0x468712 0x4686e9 0x48c825 0x49a25d 0x89b8ec 0x89b8be 0x89b8bd 0x8900f5 0x8925a2 0x8ac5c8 0x8e7011 0x67c3c9 0x8d1962 0x8e5365 0x69986e 0x67a830 0x492c81
+#	0x48c824	internal/sync.runtime_SemacquireMutex+0x24							/usr/local/go/src/runtime/sema.go:95
+#	0x49a25c	internal/sync.(*Mutex).lockSlow+0x15c								/usr/local/go/src/internal/sync/mutex.go:149
+#	0x89b8eb	internal/sync.(*Mutex).Lock+0x4b								/usr/local/go/src/internal/sync/mutex.go:70
+#	0x89b8bd	sync.(*Mutex).Lock+0x1d										/usr/local/go/src/sync/mutex.go:46
+#	0x89b8bc	go.uber.org/zap/zapcore.(*lockedWriteSyncer).Write+0x1c						/home/nosov/go/pkg/mod/go.uber.org/zap@v1.28.0/zapcore/write_syncer.go:65
+#	0x8900f4	go.uber.org/zap/zapcore.(*ioCore).Write+0xd4							/home/nosov/go/pkg/mod/go.uber.org/zap@v1.28.0/zapcore/core.go:99
+#	0x8925a1	go.uber.org/zap/zapcore.(*CheckedEntry).Write+0x361						/home/nosov/go/pkg/mod/go.uber.org/zap@v1.28.0/zapcore/entry.go:276
+#	0x8ac5c7	go.uber.org/zap.(*Logger).Info+0x47								/home/nosov/go/pkg/mod/go.uber.org/zap@v1.28.0/logger.go:247
+#	0x8e7010	github.com/m-j-majevsky/url-shortener/internal/handler.NewRouter.WithLogging.func2.1+0x610	/home/nosov/go-pro/url-shortener/internal/logger/logger.go:86
+#	0x67c3c8	net/http.HandlerFunc.ServeHTTP+0x28								/usr/local/go/src/net/http/server.go:2286
+#	0x8d1961	github.com/go-chi/chi/v5.(*Mux).ServeHTTP+0x321							/home/nosov/go/pkg/mod/github.com/go-chi/chi/v5@v5.3.1/mux.go:90
+#	0x8e5364	github.com/m-j-majevsky/url-shortener/internal/handler.(*Router).ServeHTTP+0x24			/home/nosov/go-pro/url-shortener/internal/handler/router.go:160
+#	0x69986d	net/http.serverHandler.ServeHTTP+0x8d								/usr/local/go/src/net/http/server.go:3311
+#	0x67a82f	net/http.(*conn).serve+0x64f									/usr/local/go/src/net/http/server.go:2073
+
+1 @ 0x492c81
+
+1 @ 0x4a69c5 0x4a563b 0x4e4e1f 0x4e4e14 0x4e4d86 0x4e998e 0x4e9989 0x89b90e 0x8900f5 0x8925a2 0x8ac5c8 0x8e6e14 0x67c3c9 0x8d1962 0x8e5365 0x69986e 0x67a830 0x492c81
+#	0x4a69c4	syscall.Syscall+0x24										/usr/local/go/src/syscall/syscall_linux.go:74
+#	0x4a563a	syscall.write+0x3a										/usr/local/go/src/syscall/zsyscall_linux_amd64.go:964
+#	0x4e4e1e	syscall.Write+0x23e										/usr/local/go/src/syscall/syscall_unix.go:211
+#	0x4e4e13	internal/poll.ignoringEINTRIO+0x233								/usr/local/go/src/internal/poll/fd_unix.go:738
+#	0x4e4d85	internal/poll.(*FD).Write+0x1a5									/usr/local/go/src/internal/poll/fd_unix.go:374
+#	0x4e998d	os.(*File).write+0x4d										/usr/local/go/src/os/file_posix.go:46
+#	0x4e9988	os.(*File).Write+0x48										/usr/local/go/src/os/file.go:215
+#	0x89b90d	go.uber.org/zap/zapcore.(*lockedWriteSyncer).Write+0x6d						/home/nosov/go/pkg/mod/go.uber.org/zap@v1.28.0/zapcore/write_syncer.go:66
+#	0x8900f4	go.uber.org/zap/zapcore.(*ioCore).Write+0xd4							/home/nosov/go/pkg/mod/go.uber.org/zap@v1.28.0/zapcore/core.go:99
+#	0x8925a1	go.uber.org/zap/zapcore.(*CheckedEntry).Write+0x361						/home/nosov/go/pkg/mod/go.uber.org/zap@v1.28.0/zapcore/entry.go:276
+#	0x8ac5c7	go.uber.org/zap.(*Logger).Info+0x47								/home/nosov/go/pkg/mod/go.uber.org/zap@v1.28.0/logger.go:247
+#	0x8e6e13	github.com/m-j-majevsky/url-shortener/internal/handler.NewRouter.WithLogging.func2.1+0x413	/home/nosov/go-pro/url-shortener/internal/logger/logger.go:80
+#	0x67c3c8	net/http.HandlerFunc.ServeHTTP+0x28								/usr/local/go/src/net/http/server.go:2286
+#	0x8d1961	github.com/go-chi/chi/v5.(*Mux).ServeHTTP+0x321							/home/nosov/go/pkg/mod/github.com/go-chi/chi/v5@v5.3.1/mux.go:90
+#	0x8e5364	github.com/m-j-majevsky/url-shortener/internal/handler.(*Router).ServeHTTP+0x24			/home/nosov/go-pro/url-shortener/internal/handler/router.go:160
+#	0x69986d	net/http.serverHandler.ServeHTTP+0x8d								/usr/local/go/src/net/http/server.go:3311
+#	0x67a82f	net/http.(*conn).serve+0x64f									/usr/local/go/src/net/http/server.go:2073
+

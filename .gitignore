@@ -5,19 +5,22 @@
 *.so
 *.dylib
 *.o
+bin/*
+docdump.sh
 
 # Test binary, built with `go test -c`
 *.test
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
+*-dump.txt
 
 # Binaries
 cmd/shortener/main
 cmd/shortener/shortener
 
 # Examples and snippets
-cmd/misc/*
+misc/*
 
 # Some attempts left unused
 internal/trash/*
@@ -32,4 +35,6 @@ vendor/
 # Rest files
 batch_req.json
 emergency_dead_letter.log
-storage_state.json
+storage_state.*
+audit.json
+

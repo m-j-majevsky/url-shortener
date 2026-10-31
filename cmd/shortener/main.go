@@ -1,10 +1,17 @@
+// Package main собирает конфигурацию сервиса, выбирает хранилище,
+// прогоняет миграции и запускает HTTP-сервер с логгером, аудитом
+// и маршрутизацией; остановка — по сигналам завершения, с дедлайном
+// на доставку событий аудита.
 package main
 
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
+	_ "net/http/pprof" // pprof-эндпоинты для профилирования (включается PPROF_ADDR)
 	"os"
 	"os/signal"
 	"sync"
@@ -13,6 +20,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/m-j-majevsky/url-shortener/internal/audit"
 	"github.com/m-j-majevsky/url-shortener/internal/config"
 	"github.com/m-j-majevsky/url-shortener/internal/handler"
 	"github.com/m-j-majevsky/url-shortener/internal/logger"
@@ -23,16 +31,98 @@ import (
 	"go.uber.org/zap"
 )
 
+// version — версия бинарника, заливается при сборке через
+// -ldflags "-X main.version=$(VERSION)" (см. Makefile).
+var version = "dev"
+
+// auditCloseTimeout — дедлайн ожидания доставки событий аудита при завершении
+// работы сервиса. Согласован по порядку величины с ShutdownTimeout: за это время
+// воркеры успевают доотправить нормальный объём накопившихся событий, но
+// недоступный удалённый приёмник не способен затянуть остановку на минуты.
+const auditCloseTimeout = 10 * time.Second
+
+// hardcodedSigningKey — резервный ключ подписания JWT на случай отсутствия
+// SIGNING_KEY (см. ErrEmptySigningKey в internal/config). Существует только
+// ради автотестов платформы, которые стартуют со значениями по умолчанию.
+const hardcodedSigningKey = "jwt-signing-super-secret"
+
 func main() {
 	cfg, err := config.LoadApplicationConfig()
+	if err != nil && !errors.Is(err, config.ErrEmptySigningKey) {
+		log.Fatal(err)
+	}
+	var emptySigningKey bool
+	if errors.Is(err, config.ErrEmptySigningKey) {
+		// Т.к. автотесты на платформе должны стартовать со значениями по умолчанию,
+		// пока также добавлю ветвь с установкой ключа в явном виде
+		cfg.SigningKey = []byte(hardcodedSigningKey)
+		// Чтобы все логирование шло через package logger, с помощью флага defaultSigningKey
+		// откладываем вывод предупреждения до готовности логгера
+		emptySigningKey = true
+	}
+
+	parentLogger, err := logger.Initialize(cfg.LogLevel)
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer parentLogger.Sync()
 
-	if err := logger.Initialize(cfg.LogLevel); err != nil {
-		log.Fatal(err)
+	const component = "component"
+	mainLogger := parentLogger.With(zap.String(component, "main"))
+	serverLogger := parentLogger.With(zap.String(component, "server"))
+	handlerLogger := parentLogger.With(zap.String(component, "handler"))
+	serviceLogger := parentLogger.With(zap.String(component, "service"))
+	auditLogger := parentLogger.With(zap.String(component, "audit"))
+
+	if emptySigningKey {
+		mainLogger.Warn("переменная окружения SIGNING_KEY не задана, используется значение по умолчанию")
 	}
-	defer logger.Log.Sync()
+
+	// pprof-сервер на отдельном порту — включается только переменной окружения.
+	if addr := os.Getenv("PPROF_ADDR"); addr != "" {
+		go func() {
+			mainLogger.Info("pprof-сервер запущен", zap.String("addr", addr))
+			if err := http.ListenAndServe(addr, nil); err != nil {
+				mainLogger.Warn("pprof-сервер остановлен", zap.Error(err))
+			}
+		}()
+	}
+
+	// Параметры сервиса собираются в main: конфиг самодостаточен и не знает о сервисе
+	svcConfig := service.DefaultShortenerConfig()
+	svcConfig.Logger = serviceLogger
+
+	// Проба записываемости dead-letter-файла на старте: недоступный путь должен
+	// отказать запуск немедленно, а не быть обнаруженным молча в момент первого
+	// сбоя хранилища. Побочный эффект — пустой файл создаётся сразу: оператору
+	// видно, куда пишется журнал.
+	svcConfig.DeadLetterLogFile = cfg.DeadLetterLogFile
+	if err := probeDeadLetterFile(svcConfig.DeadLetterLogFile); err != nil {
+		mainLogger.Fatal(err.Error(), zap.String("event", "probing dead-letter file"))
+	}
+	mainLogger.Info("dead-letter-файл готов к записи", zap.String("path", cfg.DeadLetterLogFile))
+
+	// Настройка аудита (паттерн «Наблюдатель»).
+	// Приёмники создаются только если соответствующий параметр конфигурации задан;
+	// иначе соответствующий приёмник аудита отключён.
+	var auditObservers []audit.Observer
+
+	if cfg.AuditFile != "" {
+		fileSink, err := audit.NewFileSink(cfg.AuditFile)
+		if err != nil {
+			mainLogger.Fatal(err.Error(), zap.String("event", "opening audit file sink"))
+		}
+		auditObservers = append(auditObservers, fileSink)
+		mainLogger.Info("файловый приёмник аудита включён", zap.String("path", cfg.AuditFile))
+	}
+
+	if cfg.AuditURL != "" {
+		auditObservers = append(auditObservers, audit.NewHTTPSink(cfg.AuditURL))
+		mainLogger.Info("удалённый приёмник аудита включён", zap.String("url", cfg.AuditURL))
+	}
+
+	// Точка диспетчеризации событий аудита; без наблюдателей Notify является no-op
+	auditor := audit.NewBroadcaster(auditLogger, auditObservers...)
 
 	// Создаём контекст с возможностью отмены по сигналу для корректного завершения
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -44,48 +134,85 @@ func main() {
 	if cfg.DatabaseDSN != "" {
 		pool, err := createPool(ctx, cfg.DatabaseDSN)
 		if err != nil {
-			logger.Log.Fatal(err.Error(), zap.String("event", "creating database connection pool"))
+			mainLogger.Fatal(err.Error(), zap.String("event", "creating database connection pool"))
 		}
 		defer pool.Close()
 
-		// Накатываем миграции
-		if err := migrations.RunMigrations(ctx, cfg.DatabaseDSN); err != nil {
-			logger.Log.Fatal(err.Error(), zap.String("event", "executing migrations"))
-		}
-
-		cfg.ServiceConfig.Storage = repository.NewPgStorage(pool)
-		logger.Log.Info("Remote storage mode is on", zap.String("event", "preparing storage"))
-	} else {
-		localStorage, saveStateMode, err = loadLocalStorage(cfg.FileStoragePath)
+		// Запрещаем параллельный запуск второго инстанса.
+		// pg_try_advisory_lock — session-level: держится, пока жив коннект.
+		// При падении процесса коннект рвётся, PostgreSQL автоматически снимает lock.
+		const instanceLockKey = 20260101
+		lockConn, err := pool.Acquire(ctx)
 		if err != nil {
-			logger.Log.Fatal(err.Error(), zap.String("event", "loading storage state from file"))
+			mainLogger.Fatal("не удалось получить коннект для instance lock", zap.Error(err))
 		}
 
-		cfg.ServiceConfig.Storage = localStorage
-		logger.Log.Info("Local storage mode is on", zap.String("event", "preparing storage"))
+		var locked bool
+		err = lockConn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", instanceLockKey).Scan(&locked)
+		if err != nil {
+			lockConn.Release()
+			mainLogger.Fatal("ошибка запроса instance lock", zap.Error(err))
+		}
+		if !locked {
+			lockConn.Release()
+			mainLogger.Fatal("другой инстанс url-shortener уже запущен — запуск отменён")
+		}
+		mainLogger.Info("instance lock захвачен")
+		defer func() {
+			lockConn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", instanceLockKey)
+			lockConn.Release()
+		}()
+
+		// Накатываем миграции (после захвата instance lock,
+		// чтобы исключить параллельный запуск миграций из второго инстанса)
+		if err := migrations.RunMigrations(ctx, cfg.DatabaseDSN); err != nil {
+			mainLogger.Fatal(err.Error(), zap.String("event", "executing migrations"))
+		}
+
+		pgStorage := repository.NewPgStorage(pool)
+		svcConfig.Storage = pgStorage
+		mainLogger.Info("включён режим удалённого хранилища", zap.String("event", "preparing storage"))
+	} else {
+		// Защита от запуска второго инстанса в режиме файлового хранилища:
+		// два экземпляра, пишущих в один файл состояния, затёрли бы данные друг друга.
+		// flock — advisory lock уровня ОС: держится, пока жив процесс, при падении
+		// процесса ОС снимает lock автоматически (аналог pg_try_advisory_lock).
+		// С пустым путём блокировка не нужна: хранилище живёт в памяти,
+		// и конфликт портов и так не даст запуститься второму экземпляру на том же адресе.
+		if cfg.FileStoragePath != "" {
+			lockFile, err := acquireFileLock(cfg.FileStoragePath + ".lock")
+			if err != nil {
+				mainLogger.Fatal(err.Error(), zap.String("event", "acquiring instance lock"))
+			}
+			defer releaseFileLock(mainLogger, lockFile)
+		}
+
+		localStorage, saveStateMode, err = loadLocalStorage(mainLogger, cfg.FileStoragePath)
+		if err != nil {
+			mainLogger.Fatal(err.Error(), zap.String("event", "loading storage state from file"))
+		}
+
+		svcConfig.Storage = localStorage
+		mainLogger.Info("включён режим локального хранилища", zap.String("event", "preparing storage"))
 	}
 
 	if saveStateMode && cfg.FileStoragePath != "" {
 		// Режим сохранения локального хранилища в файл
-		defer saveStateDeferred(localStorage, cfg.FileStoragePath)
+		defer saveStateDeferred(mainLogger, localStorage, cfg.FileStoragePath)
 	}
 
-	// Создаем канал для обработки сигналов от ОС
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	service, router, err := makeServiceAndRouter(cfg)
+	svc, router, err := makeServiceAndRouter(handlerLogger, svcConfig, cfg, auditor)
 	if err != nil {
-		logger.Log.Fatal(err.Error(), zap.String("event", "initializing service"))
+		mainLogger.Fatal(err.Error(), zap.String("event", "initializing service"))
 	}
-	defer service.CleanUp()
+	defer svc.CleanUp()
 
 	// Настраиваем глобальную систему канализации и обработки запросов на удаление записей (DELETE /api/user/urls)
 	var backgroundWg sync.WaitGroup
 	backgroundWg.Add(1)
 	go func() {
 		defer backgroundWg.Done()
-		service.StartItemsDeletionProcessor(ctx)
+		svc.StartItemsDeletionProcessor(ctx)
 	}()
 
 	// Создаем сервер явно, поскольку ссылку на него придется использовать для shutdown'а по сигналу от ОС
@@ -94,34 +221,80 @@ func main() {
 		Handler: router,
 	}
 
-	// Сам сервер запускаем фоном
-	go listenAndServe(server)
+	// Сам сервер запускаем фоном; ошибка запуска (например, занятый порт) отправляется
+	// в канал, из которого её читает main, — иначе ошибка терялась бы в горутине:
+	// сервис оставался бы живым, но не отвечающим на запросы.
+	serverLogger.Info("сервис запущен", zap.String("address", server.Addr),
+		zap.String("event", "starting server"))
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.ListenAndServe()
+	}()
 
-	// Блокируем main, пока не придёт сигнал
-	<-ctx.Done()
+	// Блокируем main, пока не придёт сигнал или ошибка запуска сервера
+	select {
+	case <-ctx.Done():
+		// Обычный путь: сигнал завершения — переходим к graceful shutdown
+	case err := <-errCh:
+		// ErrServerClosed сюда дойти не может: Shutdown ещё не вызывался.
+		// log.Fatal завершает процесс немедленно, минуя defers; это допустимо:
+		// сервер не начал работу, состояние не изменялось, сохранять нечего.
+		serverLogger.Fatal(err.Error(), zap.String("event", "starting HTTP server"))
+	}
 
 	// Инициируем graceful shutdown
 	event := zap.String("event", "shutdown on signal")
-	logger.Log.Info("Shutdown signal received", zap.String("cause", context.Cause(ctx).Error()), event)
+	serverLogger.Info("получен сигнал завершения", zap.String("cause", context.Cause(ctx).Error()), event)
 
 	shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer shutdownRelease()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		logger.Log.Error("Graceful shutdown timed out", zap.Error(err), event)
+		serverLogger.Error("превышен таймаут graceful shutdown HTTP-сервера", zap.Error(err), event)
 	} else {
-		logger.Log.Info("HTTP server stopped gracefully", event)
+		serverLogger.Info("HTTP-сервер остановлен корректно", event)
 	}
 
 	// Закрываем канал для мягкой остановки глобального процесса канализации и обработки
 	// запросов на удаление записей (DELETE /api/user/urls)
-	service.StopItemsDeletionProcessor()
-	logger.Log.Info("Deletion processor input queue channel closed", event)
+	svc.StopItemsDeletionProcessor()
+	mainLogger.Info("входной канал очереди обработчика удалений закрыт", event)
 
 	// Дожидаемся окончания обработки данных в канале, их сохранения или логирования ошибки
 	backgroundWg.Wait()
 
-	logger.Log.Info("Application shutting down gracefully", zap.String("event", "shutdown complete"))
+	// Дожидаемся доставки всех отправленных событий аудита с дедлайном, затем
+	// закрываем приёмники (файловый приёмник держит открытый файл, его нужно закрыть).
+	// Без дедлайна недоступный удалённый приёмник способен затянуть остановку
+	// сервиса на очередь накопившихся событий, умноженную на таймаут одной отправки.
+	auditDone := make(chan struct{})
+	go func() {
+		auditor.Close()
+		close(auditDone)
+	}()
+
+	select {
+	case <-auditDone:
+		closeAuditSinks(mainLogger, auditObservers)
+	case <-time.After(auditCloseTimeout):
+		// Дедлайн истёк: приёмники сознательно не закрываем — воркеры аудита ещё
+		// могут отправлять события, и закрытие файла посреди записи дало бы ошибки.
+		// Оставшаяся горутина завершится вместе с процессом.
+		mainLogger.Error("истекло время ожидания доставки аудита, приёмники аудита не закрыты",
+			zap.Duration("timeout", auditCloseTimeout), event)
+	}
+
+	mainLogger.Info("сервис остановлен", zap.String("event", "shutdown complete"))
+}
+
+// probeDeadLetterFile проверяет, что dead-letter-файл доступен для дозаписи:
+// открывает его (создавая при отсутствии) и сразу закрывает.
+func probeDeadLetterFile(path string) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("dead-letter-файл %q недоступен для дозаписи: %w", path, err)
+	}
+	return f.Close()
 }
 
 // Создаёт настроенный пул соединений и проверяет подключение.
@@ -150,19 +323,19 @@ func createPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-func loadLocalStorage(storagePath string) (*repository.LocalStorage, bool, error) {
+func loadLocalStorage(log *zap.Logger, storagePath string) (*repository.LocalStorage, bool, error) {
 	storage := repository.NewLocalStorage()
 
 	event := zap.String("event", "loading state from file")
 
 	err := storage.LoadFromFile(storagePath)
 	if err == nil {
-		logger.Log.Info("Local storage read successfully", zap.String("path", storagePath), event)
+		log.Info("локальное хранилище загружено из файла", zap.String("path", storagePath), event)
 		return storage, true, nil
 	}
 
 	if errors.Is(err, os.ErrNotExist) {
-		logger.Log.Info("Local storage file not found, starting with empty storage", zap.String("path", storagePath), event)
+		log.Info("файл локального хранилища не найден, начинаем с пустого хранилища", zap.String("path", storagePath), event)
 		return storage, true, nil
 	}
 
@@ -170,36 +343,71 @@ func loadLocalStorage(storagePath string) (*repository.LocalStorage, bool, error
 }
 
 // Для сохранения состояния локального хранилища в файл по завершении работы сервиса (предполагается defer вызов)
-func saveStateDeferred(storage *repository.LocalStorage, path string) {
+func saveStateDeferred(log *zap.Logger, storage *repository.LocalStorage, path string) {
 	event := zap.String("event", "deferred state saving")
 	if err := storage.SaveToFile(path); err != nil {
-		logger.Log.Error("Failed to save local storage in defer", zap.Error(err), zap.String("path", path), event)
+		log.Error("ошибка сохранения локального хранилища в defer", zap.Error(err), zap.String("path", path), event)
 	} else {
-		logger.Log.Info("Local storage saved in defer", zap.String("path", path), event)
+		log.Info("локальное хранилище сохранено в defer", zap.String("path", path), event)
 	}
 }
 
-func makeServiceAndRouter(cfg config.ApplicationConfig) (*service.Shortener, http.Handler, error) {
-	svc, err := service.NewShortener(cfg.ServiceConfig)
+// acquireFileLock берёт эксклюзивный advisory flock на файл-замок рядом с файлом
+// состояния локального хранилища. Отдельный файл ".lock" нужен, чтобы не создавать
+// сам файл состояния: LoadFromFile отличает «файла нет — стартуем с пустого
+// хранилища» от битого содержимого, и создание пустого файла состояния здесь
+// сломало бы эту семантику. Файл-замок при этом остаётся на диске пустым — это
+// нормально: lock снимается по закрытию файла или при смерти процесса.
+func acquireFileLock(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o666)
+	if err != nil {
+		return nil, fmt.Errorf("не удалось открыть файл для instance lock %q: %w", path, err)
+	}
+	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if err == nil {
+		return f, nil
+	}
+	f.Close()
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		return nil, errors.New("другой инстанс url-shortener уже запущен — запуск отменён")
+	}
+	return nil, fmt.Errorf("ошибка запроса instance lock: %w", err)
+}
+
+// releaseFileLock снимает instance lock и закрывает lock-файл (предполагается defer вызов).
+func releaseFileLock(log *zap.Logger, f *os.File) {
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
+		log.Error("ошибка снятия instance lock", zap.Error(err))
+	}
+	if err := f.Close(); err != nil {
+		log.Error("ошибка закрытия lock-файла", zap.Error(err))
+	}
+}
+
+func makeServiceAndRouter(log *zap.Logger, svcConfig service.ShortenerConfig, cfg config.ApplicationConfig, auditor audit.Notifier) (*service.Shortener, http.Handler, error) {
+	svc, err := service.NewShortener(svcConfig)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	rt, err := handler.NewRouter(handler.NewRouterParams(cfg, svc))
-	if err != nil {
-		return nil, nil, err
-	}
+	// Роутер принимает сервис через композитный интерфейс handler.Shortener,
+	// включающий все мелкие интерфейсы.
+	rt := handler.NewRouter(handler.NewRouterParams(cfg, svc, auditor, log))
 
 	return svc, rt, nil
 }
 
-// Создаем сервис и запускаем HTTP-сервер
-func listenAndServe(server *http.Server) {
-	event := zap.String("event", "starting server")
-	logger.Log.Info("Starting server", zap.String("address", server.Addr), event)
-	if err := server.ListenAndServe(); err != nil &&
-		// ErrServerClosed возникает при корректном Shutdown
-		!errors.Is(err, http.ErrServerClosed) {
-		logger.Log.Error(err.Error(), event)
+// closeAuditSinks закрывает приёмники аудита, требующие освобождения ресурсов
+// (например, файловый приёмник держит открытый файл).
+// Вызывается после завершения доставки событий.
+func closeAuditSinks(log *zap.Logger, observers []audit.Observer) {
+	for _, obs := range observers {
+		// Интерфейс Observer не обязан быть Closeable — закрываем только тех,
+		// кто поддерживает io.Closer
+		if closer, ok := obs.(io.Closer); ok {
+			if err := closer.Close(); err != nil {
+				log.Error("ошибка закрытия приёмника аудита", zap.Error(err))
+			}
+		}
 	}
 }

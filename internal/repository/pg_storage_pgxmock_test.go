@@ -20,7 +20,7 @@ func newMockPgStorage(t *testing.T) (*pgStorage, pgxmock.PgxConnIface) {
 	t.Helper()
 	mock, err := pgxmock.NewConn(pgxmock.QueryMatcherOption(pgxmock.QueryMatcherRegexp))
 	require.NoError(t, err)
-	// PgxConnIface реализует интерфейс dbtx (QueryRow/Exec/Ping), поэтому мок
+	// PgxConnIface реализует интерфейс dbtx (QueryRow/Exec/Ping/Begin/Query), поэтому мок
 	// можно передать прямо в конструктор репозитория - никакой БД не нужно.
 	return NewPgStorage(mock), mock
 }
@@ -65,7 +65,9 @@ func TestPgStorage_Resolve_Success(t *testing.T) {
 	repo, mock := newMockPgStorage(t)
 	defer mock.Close(t.Context())
 
-	rows := mock.NewRows([]string{"original_url", "is_deleted"}).AddRow(url, nil)
+	// is_deleted в схеме NOT NULL: "не удалено" = false.
+	// (В bak стояло nil — скан NULL в *bool в pgx даёт ошибку.)
+	rows := mock.NewRows([]string{"original_url", "is_deleted"}).AddRow(url, false)
 	mock.ExpectQuery(`SELECT original_url, is_deleted FROM shorten_urls WHERE token = \$1`).
 		WithArgs(tok).
 		WillReturnRows(rows)
@@ -114,7 +116,7 @@ func TestPgStorage_Store_Success(t *testing.T) {
 	var userUIID pgtype.UUID
 	require.NoError(t, userUIID.Scan(userID))
 
-	rows := mock.NewRows([]string{"token"}).AddRow(tok)
+	rows := mock.NewRows([]string{"token", "was_insert"}).AddRow(tok, true)
 	mock.ExpectQuery(`INSERT INTO shorten_urls`).
 		WithArgs(tok, url, userUIID).WillReturnRows(rows)
 
@@ -149,7 +151,7 @@ func TestPgStorage_Store_ErrOriginalURLExists(t *testing.T) {
 
 	mock.ExpectQuery(`INSERT INTO shorten_urls`).
 		WithArgs(tok, url, userUIID).
-		WillReturnRows(mock.NewRows([]string{"token"}).AddRow(anotherTok))
+		WillReturnRows(mock.NewRows([]string{"token", "was_insert"}).AddRow(anotherTok, false))
 
 	err := repo.Store(t.Context(), tok, url, userID)
 	var eoue *ErrOriginalURLExists
@@ -157,6 +159,29 @@ func TestPgStorage_Store_ErrOriginalURLExists(t *testing.T) {
 	assert.Equal(t, anotherTok, eoue.StoredToken)
 	assert.Equal(t, url, eoue.URL)
 
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgStorage_Store_Exact_Copy(t *testing.T) {
+	// Сценарий из комментария "Важно" ниже: точная копия строки
+	// (token, original_url) на входе в INSERT. RETURNING даёт was_insert = false
+	// (xmax-трюк в pg_storage.go), поэтому ожидаем
+	// ErrOriginalURLExists с _собственным_ токеном записи, а не ErrTokenTaken.
+	repo, mock := newMockPgStorage(t)
+	defer mock.Close(t.Context())
+
+	var userUIID pgtype.UUID
+	require.NoError(t, userUIID.Scan(userID))
+
+	rows := mock.NewRows([]string{"token", "was_insert"}).AddRow(tok, false)
+	mock.ExpectQuery(`INSERT INTO shorten_urls`).
+		WithArgs(tok, url, userUIID).WillReturnRows(rows)
+
+	err := repo.Store(t.Context(), tok, url, userID)
+	var eoue *ErrOriginalURLExists
+	require.ErrorAs(t, err, &eoue)
+	assert.Equal(t, tok, eoue.StoredToken)
+	assert.Equal(t, url, eoue.URL)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -211,6 +236,22 @@ func TestPgStorage_Unexpected_DB_Error(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
+// Важно:
+//
+// Сценарий "точная копия строки (token, original_url) на входе в INSERT" обрабатывается корректно
+// за счет RETURNING (xmax = 0) AS was_insert (xmax-трюк в pg_storage.go): у свежевставленной
+// строки xmax = 0, после DO UPDATE (даже холостого) — идентификатор текущей транзакции.
+// was_insert = false трактуется как конфликт, откуда следует обработка
+// такой входной строки по сценарию ErrOriginalURLExists, т.е. возврату пользователю существующих данных
+// без перезаписи, но со статусом конфликта по исходному URL.
+//
+// Семантика части 7: ON CONFLICT (original_url) срабатывает и на строке с is_deleted = TRUE -
+// пересохранение удалённого URL возвращает ErrOriginalURLExists со _старым_ токеном.
+// Это контракт самой БД, а не кода репозитория: на моке его не воспроизвести -
+// мок лишь эмулирует ответ сервера на конкретный INSERT. Поведение покрыто
+// интеграционным тестом TestPgStorage_Integration_Deletion_Semantics
+// (pg_storage_integration_test.go, сборочный тег integration).
+
 // BatchStore
 
 func TestBatchStore_Empty_Batch(t *testing.T) {
@@ -234,11 +275,11 @@ func TestBatchStore_All_Success(t *testing.T) {
 	mock.ExpectBegin()
 
 	const stmtName = "batch_store"
-	const query = `INSERT INTO shorten_urls \(token, original_url, user_id\) 
+	const query = `INSERT INTO shorten_urls \(token, original_url, user_id\)
 				   VALUES \(\$1, \$2, \$3\)
-				   ON CONFLICT \(original_url\)  
+				   ON CONFLICT \(original_url\)
                    DO UPDATE SET original_url = EXCLUDED\.original_url
-				   RETURNING token`
+				   RETURNING token, \(xmax = 0\) AS was_insert`
 	mock.ExpectPrepare(stmtName, query)
 
 	var userUIID pgtype.UUID
@@ -249,10 +290,10 @@ func TestBatchStore_All_Success(t *testing.T) {
 		{Token: "tok2", OriginalURL: "https://b.com"},
 	}
 	for _, item := range batchIn {
-		rrow := mock.NewRows([]string{"token"}).AddRow(item.Token)
+		rrow := mock.NewRows([]string{"token", "was_insert"}).AddRow(item.Token, true)
 		mock.ExpectQuery(stmtName).
 			WithArgs(item.Token, item.OriginalURL, userUIID).
-			WillReturnRows(rrow) // возвращаем тот же токен — значит вставка прошла
+			WillReturnRows(rrow) // was_insert = true — чистая вставка
 	}
 
 	mock.ExpectCommit()
@@ -277,11 +318,11 @@ func TestBatchStore_ErrOriginalURLExists(t *testing.T) {
 	mock.ExpectBegin()
 
 	const stmtName = "batch_store"
-	const query = `INSERT INTO shorten_urls \(token, original_url, user_id\) 
+	const query = `INSERT INTO shorten_urls \(token, original_url, user_id\)
 		           VALUES \(\$1, \$2, \$3\)
-		           ON CONFLICT \(original_url\)   
+		           ON CONFLICT \(original_url\)
                    DO UPDATE SET original_url = EXCLUDED\.original_url
-		           RETURNING token`
+		           RETURNING token, \(xmax = 0\) AS was_insert`
 	mock.ExpectPrepare(stmtName, query)
 
 	var userUIID pgtype.UUID
@@ -296,12 +337,12 @@ func TestBatchStore_ErrOriginalURLExists(t *testing.T) {
 	// 1. Конфликт по original_url: возвращаем существующий токен (не тот, который мы хотели вставить)
 	mock.ExpectQuery(stmtName).
 		WithArgs(batchIn[0].Token, batchIn[0].OriginalURL, userUIID).
-		WillReturnRows(mock.NewRows([]string{"token"}).AddRow(existingToken))
+		WillReturnRows(mock.NewRows([]string{"token", "was_insert"}).AddRow(existingToken, false))
 
 	// 2. Успешная вставка
 	mock.ExpectQuery(stmtName).
 		WithArgs(batchIn[1].Token, batchIn[1].OriginalURL, userUIID).
-		WillReturnRows(mock.NewRows([]string{"token"}).AddRow(batchIn[1].Token))
+		WillReturnRows(mock.NewRows([]string{"token", "was_insert"}).AddRow(batchIn[1].Token, true))
 
 	mock.ExpectCommit()
 
@@ -341,11 +382,11 @@ func TestBatchStore_ConflictToken(t *testing.T) {
 	mock.ExpectBegin()
 
 	const stmtName = "batch_store"
-	const query = `INSERT INTO shorten_urls \(token, original_url, user_id\) 
+	const query = `INSERT INTO shorten_urls \(token, original_url, user_id\)
 		           VALUES \(\$1, \$2, \$3\)
-		           ON CONFLICT \(original_url\)   
+		           ON CONFLICT \(original_url\)
                    DO UPDATE SET original_url = EXCLUDED\.original_url
-		           RETURNING token`
+		           RETURNING token, \(xmax = 0\) AS was_insert`
 	mock.ExpectPrepare(stmtName, query)
 
 	batchIn := StoreBatch{
@@ -401,11 +442,11 @@ func TestBatchStore_MixedScenario(t *testing.T) {
 	}
 
 	const stmtName = "batch_store"
-	const query = `INSERT INTO shorten_urls \(token, original_url, user_id\) 
+	const query = `INSERT INTO shorten_urls \(token, original_url, user_id\)
 		           VALUES \(\$1, \$2, \$3\)
-		           ON CONFLICT \(original_url\)   
+		           ON CONFLICT \(original_url\)
                    DO UPDATE SET original_url = EXCLUDED\.original_url
-		           RETURNING token`
+		           RETURNING token, \(xmax = 0\) AS was_insert`
 	mock.ExpectPrepare(stmtName, query)
 
 	var userUIID pgtype.UUID
@@ -414,13 +455,13 @@ func TestBatchStore_MixedScenario(t *testing.T) {
 	// OK
 	mock.ExpectQuery(stmtName).
 		WithArgs(batchIn[0].Token, batchIn[0].OriginalURL, userUIID).
-		WillReturnRows(mock.NewRows([]string{"token"}).AddRow(batchIn[0].Token))
+		WillReturnRows(mock.NewRows([]string{"token", "was_insert"}).AddRow(batchIn[0].Token, true))
 
 	// Conflict URL: возвращаем другой токен
 	existingToken := "existing-for-conflict-url"
 	mock.ExpectQuery(stmtName).
 		WithArgs(batchIn[1].Token, batchIn[1].OriginalURL, userUIID).
-		WillReturnRows(mock.NewRows([]string{"token"}).AddRow(existingToken))
+		WillReturnRows(mock.NewRows([]string{"token", "was_insert"}).AddRow(existingToken, false))
 
 	// Conflict Token: ошибка unique_violation
 	constraintName := "shorten_urls_token_key"
@@ -482,11 +523,11 @@ func TestBatchStore_TransactionError(t *testing.T) {
 	mock.ExpectBegin()
 
 	const stmtName = "batch_store"
-	const query = `INSERT INTO shorten_urls \(token, original_url, user_id\) 
+	const query = `INSERT INTO shorten_urls \(token, original_url, user_id\)
 		           VALUES \(\$1, \$2, \$3\)
-		           ON CONFLICT \(original_url\)  
-                   DO UPDATE SET original_url = EXCLUDED\.original_url 
-		           RETURNING token`
+		           ON CONFLICT \(original_url\)
+                   DO UPDATE SET original_url = EXCLUDED\.original_url
+		           RETURNING token, \(xmax = 0\) AS was_insert`
 	mock.ExpectPrepare(stmtName, query)
 
 	var userUIID pgtype.UUID
@@ -508,14 +549,6 @@ func TestBatchStore_TransactionError(t *testing.T) {
 
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
-
-// Важно:
-//
-// Сценарий "точная копия строки (token, origianl_url) на входе в INSERT" обрабатывается корректно
-// за счет ON CONFLICT (original_url) DO UPDATE ... RETURNING token, проверка которого
-// выполняется до срабатывания ограничения shorten_urls_token_key, откуда следует обработка
-// такой входной строки по сценарию ErrOriginalURLExists, т.е. возврату пользователю существующих данных
-// без перезаписи, но со статусом конфликта по исходному URL.
 
 // DeleteByTokens
 
@@ -548,15 +581,18 @@ func TestDeleteByTokens_Several_Items_Success(t *testing.T) {
 	mock.ExpectPrepare(stmtName, query)
 
 	tokens := []string{tok, anotherTok}
-	for _, t := range tokens {
+	// (В bak переменная цикла затеняла *testing.T — компилировалось, но мина.)
+	for _, tokDel := range tokens {
 		mock.ExpectExec(stmtName).
-			WithArgs(t).
+			WithArgs(tokDel).
 			WillReturnResult(pgxmock.NewResult("DELETE", 1))
 	}
 
 	mock.ExpectCommit()
 
 	assert.NoError(t, repo.DeleteByTokens(t.Context(), tokens))
+
+	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestDeleteByTokens_Empty_Token_Set(t *testing.T) {
@@ -721,10 +757,10 @@ func TestPgStorage_MarkUserURLsDeleted(t *testing.T) {
 
 	// Тест 2: Построение правильного запроса для установки флага is_deleted
 	t.Run("Correct UPDATE queue building", func(t *testing.T) {
-		sql := regexp.QuoteMeta(`UPDATE shorten_urls AS u 
-								 SET is_deleted = TRUE 
-							  	 FROM (VALUES ($1, $2::uuid), ($3, $4::uuid)) AS v(token, user_id) 
-								 WHERE u.token = v.token AND u.user_id = v.user_id`)
+		sql := regexp.QuoteMeta(`UPDATE shorten_urls AS u
+							 SET is_deleted = TRUE
+							 	FROM (VALUES ($1, $2::uuid), ($3, $4::uuid)) AS v(token, user_id)
+							 WHERE u.token = v.token AND u.user_id = v.user_id`)
 		mock.ExpectExec(sql).
 			WithArgs(tok, userUIID, tok+"W", userUIID).
 			WillReturnResult(pgxmock.NewResult("UPDATE", 2))

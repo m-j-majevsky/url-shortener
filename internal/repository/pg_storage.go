@@ -1,3 +1,5 @@
+// Package repository реализует хранилища сервиса: PostgreSQL на pgx v5
+// и локальное in-memory с опцией сохранения состояния в файл.
 package repository
 
 import (
@@ -6,10 +8,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/m-j-majevsky/url-shortener/internal/model"
 )
 
 type (
@@ -49,6 +51,9 @@ func NewPgStorage(db dbtx) *pgStorage {
 	}
 }
 
+// Store сохраняет (токен, URL, пользователь). Конфликт по original_url возвращает
+// ErrOriginalURLExists со старым токеном (в том числе для удалённых записей),
+// по токену — ErrTokenTaken.
 func (s *pgStorage) Store(ctx context.Context, token, longURL, userID string) error {
 	// Важно: ON CONFLICT срабатывает _только_ для original_url.
 	// Конфликты по token будут падать в ошибку, которую мы обработаем ниже.
@@ -56,7 +61,7 @@ func (s *pgStorage) Store(ctx context.Context, token, longURL, userID string) er
 			   VALUES ($1, $2, $3)
 			   ON CONFLICT (original_url) DO UPDATE 
 			   SET original_url = EXCLUDED.original_url 
-			   RETURNING token`
+			   RETURNING token, (xmax = 0) AS was_insert`
 
 	var userUIID pgtype.UUID
 	if err := userUIID.Scan(userID); err != nil {
@@ -65,10 +70,11 @@ func (s *pgStorage) Store(ctx context.Context, token, longURL, userID string) er
 
 	var returnedToken string
 	row := s.db.QueryRow(ctx, q, token, longURL, userUIID)
-	if err := row.Scan(&returnedToken); err != nil {
+	var wasInsert bool
+	if err := row.Scan(&returnedToken, &wasInsert); err != nil {
 		// Различаем по коду PG нарушение уникальности и прочие ошибки
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
 			// Сработало ограничение уникальности
 			if strings.ToLower(pgErr.ConstraintName) == "shorten_urls_token_key" {
 				return NewErrTokenTaken(token)
@@ -84,14 +90,18 @@ func (s *pgStorage) Store(ctx context.Context, token, longURL, userID string) er
 
 	// Если мы здесь, значит либо INSERT прошел успешно, либо сработал ON CONFLICT (DO UPDATE)
 	//
-	// Признаком ON CONFLICT считаем отличие returnedToken от item.Token
-	if token != returnedToken {
+	// Признаком ON CONFLICT считаем wasInsert = false
+	// xmax = 0 только у свежевставленной строки;
+	// после DO UPDATE (даже холостого) xmax ненулевой — была перезапись
+	if !wasInsert {
 		return NewErrOriginalURLExists(returnedToken, longURL)
 	}
 
 	return nil
 }
 
+// Resolve возвращает URL по токену: удалённый — ErrTokenIsDeleted,
+// несуществующий — ErrTokenNotFound.
 func (s *pgStorage) Resolve(ctx context.Context, token string) (string, error) {
 	const q = `SELECT original_url, is_deleted
 	           FROM shorten_urls
@@ -116,13 +126,18 @@ func (s *pgStorage) Resolve(ctx context.Context, token string) (string, error) {
 	return url, nil
 }
 
+// Ping проверяет доступность БД.
 func (s *pgStorage) Ping(ctx context.Context) error {
 	return s.db.Ping(ctx)
 }
 
-// Важно:
-// Гарантировать уникальность StoreBatch.Token среди элемемнов параметра batch,
-// это ответсвенность вызывающего кода!
+// BatchStore сохраняет пакет записей в одной транзакции с подготовленным
+// запросом. Конфликт по original_url возвращает существующий токен
+// в элементе результата с признаком ConflictedURL, конфликт по токену —
+// признак ConflictedToken.
+//
+// Важно: гарантировать уникальность StoreBatch.Token среди элементов
+// параметра batch — это ответственность вызывающего кода!
 func (s *pgStorage) BatchStore(ctx context.Context, batchReq StoreBatch, userID string) (StoreBatch, error) {
 	if len(batchReq) == 0 {
 		return StoreBatch{}, nil
@@ -147,7 +162,7 @@ func (s *pgStorage) BatchStore(ctx context.Context, batchReq StoreBatch, userID 
 					VALUES ($1, $2, $3)
 					ON CONFLICT (original_url) DO UPDATE 
 			        SET original_url = EXCLUDED.original_url 
-					RETURNING token`
+					RETURNING token, (xmax = 0) AS was_insert`
 
 	if _, err = tx.Prepare(ctx, qStoreName, qStore); err != nil {
 		return StoreBatch{}, fmt.Errorf("ошибка подготовки запроса: %w", err)
@@ -162,10 +177,11 @@ func (s *pgStorage) BatchStore(ctx context.Context, batchReq StoreBatch, userID 
 		row := tx.QueryRow(ctx, qStoreName, item.Token, item.OriginalURL, userUIID)
 
 		var returnedToken string
-		if err := row.Scan(&returnedToken); err != nil {
+		var wasInsert bool
+		if err := row.Scan(&returnedToken, &wasInsert); err != nil {
 			// Различаем по коду PG нарушение уникальности shorten_urls_token_key и прочие ошибки
 			var pgErr *pgconn.PgError
-			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
 				// Сработало ограничение уникальности
 				if strings.ToLower(pgErr.ConstraintName) == "shorten_urls_token_key" {
 					item.ConflictedToken = true
@@ -182,8 +198,10 @@ func (s *pgStorage) BatchStore(ctx context.Context, batchReq StoreBatch, userID 
 
 		// Если мы здесь, значит либо INSERT прошел успешно, либо сработал ON CONFLICT (DO UPDATE)
 		//
-		// Признаком ON CONFLICT считаем отличие returnedToken от item.Token
-		if item.Token != returnedToken {
+		// Признаком ON CONFLICT считаем wasInsert = false
+		// xmax = 0 только у свежевставленной строки;
+		// после DO UPDATE (даже холостого) xmax ненулевой — была перезапись
+		if !wasInsert {
 			// Такую запись в батче помечаем для дальнейшей обработки в вызывающем коде
 			item.ConflictedURL = true
 			item.Token = returnedToken
@@ -197,6 +215,7 @@ func (s *pgStorage) BatchStore(ctx context.Context, batchReq StoreBatch, userID 
 	return MayBeAddErrors(batchRes)
 }
 
+// DeleteByTokens жёстко удаляет записи по токенам в одной транзакции.
 func (s *pgStorage) DeleteByTokens(ctx context.Context, tokens []string) error {
 	if len(tokens) == 0 {
 		return nil
@@ -207,7 +226,7 @@ func (s *pgStorage) DeleteByTokens(ctx context.Context, tokens []string) error {
 		return fmt.Errorf("ошибка создания транзакции: %w", err)
 	}
 	// Откат из-за ошибки. Commit ниже завершает tx, и тогда Rollback вернёт
-	// sql.ErrTxDone — это нормально, ошибку игнорируем.
+	// pgconn.ErrTxClosed — это нормально, ошибку игнорируем.
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	const qDelete = "batch_delete"
@@ -228,6 +247,7 @@ func (s *pgStorage) DeleteByTokens(ctx context.Context, tokens []string) error {
 	return nil
 }
 
+// CheckUserExists проверяет существование пользователя по ID.
 func (s *pgStorage) CheckUserExists(ctx context.Context, userID string) (exists bool, err error) {
 	const q = `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)`
 
@@ -241,9 +261,10 @@ func (s *pgStorage) CheckUserExists(ctx context.Context, userID string) (exists 
 		return false, fmt.Errorf("ошибка запроса пользователя с ID = %v: %w", userID, err)
 	}
 
-	return
+	return exists, nil
 }
 
+// CreateUser регистрирует пользователя и возвращает его UUID.
 func (s *pgStorage) CreateUser(ctx context.Context) (string, error) {
 	const q = `INSERT INTO users DEFAULT VALUES RETURNING id`
 
@@ -255,30 +276,32 @@ func (s *pgStorage) CreateUser(ctx context.Context) (string, error) {
 	return id.String(), nil
 }
 
-func (s *pgStorage) ListUserURLs(ctx context.Context, userID string) (model.UserURLsRes, error) {
+// ListUserURLs возвращает не удалённые URL пользователя.
+func (s *pgStorage) ListUserURLs(ctx context.Context, userID string) (UserURLs, error) {
 	const q = `SELECT token, original_url
                FROM shorten_urls
                WHERE user_id = $1 AND is_deleted <> TRUE`
 
 	var userUIID pgtype.UUID
 	if err := userUIID.Scan(userID); err != nil {
-		return model.UserURLsRes{}, fmt.Errorf("неверный формат ID пользователя %q: %w", userID, err)
+		return UserURLs{}, fmt.Errorf("неверный формат ID пользователя %q: %w", userID, err)
 	}
 
 	rows, err := s.db.Query(ctx, q, userUIID)
 	if err != nil {
-		return model.UserURLsRes{}, fmt.Errorf("ошибка запроса по URL для пользователя c ID %q: %w", userID, err)
+		return UserURLs{}, fmt.Errorf("ошибка запроса по URL для пользователя c ID %q: %w", userID, err)
 	}
 	defer rows.Close()
 
-	userURLs, err := pgx.CollectRows(rows, pgx.RowToStructByName[model.UserURLsResItem])
+	userURLs, err := pgx.CollectRows(rows, pgx.RowToStructByName[UserURL])
 	if err != nil {
-		return model.UserURLsRes{}, fmt.Errorf("ошибка обработки ответа от хранилища: %w", err)
+		return UserURLs{}, fmt.Errorf("ошибка обработки ответа от хранилища: %w", err)
 	}
 
 	return userURLs, nil
 }
 
+// MarkUserURLsDeleted помечает токены пользователя удалёнными (is_deleted = TRUE).
 func (s *pgStorage) MarkUserURLsDeleted(ctx context.Context, batch ToMarkDeletedReqBatch) error {
 	if len(batch) == 0 {
 		return nil

@@ -1,6 +1,5 @@
-// Идея реализация подсмотрена у Рафаэля Мустафина
-// https://github.com/Bazys/practicum-webinars/blob/master/videos/migrate.go
-
+// Package migrations встраивает SQL-скрипты миграций в бинарник
+// и накатывает их на PostgreSQL при запуске сервиса.
 package migrations
 
 import (
@@ -17,17 +16,22 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
+// Идея реализации подсмотрена у Рафаэля Мустафина
+// https://github.com/Bazys/practicum-webinars/blob/master/videos/migrate.go
+
 // migrations встраивает миграционные скрипты прямо в бинарник
 //
 //go:embed *.sql
 var migrations embed.FS
 
-// runMigrations накатывает все доступные миграции.
-// dsn - строка вида "postgres://user:pass@host:5432/db?sslmode=disable".
+// RunMigrations накатывает все доступные миграции на базу по строке
+// подключения dsn вида "postgres://user:pass@host:5432/db?sslmode=disable".
+// Повторный запуск ничего не меняет: состояние «миграций нет»
+// (migrate.ErrNoChange) трактуется как успех.
 func RunMigrations(_ context.Context, dsn string) error {
 	src, err := iofs.New(migrations, ".")
 	if err != nil {
-		return fmt.Errorf("ошибка доступа к источнику даннах миграции: %w", err)
+		return fmt.Errorf("ошибка доступа к источнику данных миграции: %w", err)
 	}
 
 	// Очищаем DSN от лишних фильтров

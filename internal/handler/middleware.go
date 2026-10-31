@@ -6,13 +6,16 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/m-j-majevsky/url-shortener/internal/auth"
-	"github.com/m-j-majevsky/url-shortener/internal/logger"
 	"go.uber.org/zap"
+
+	"github.com/m-j-majevsky/url-shortener/internal/auth"
 )
 
+// responseContentTypeMiddleware устанавливает заголовок Content-Type ответа:
+// текстовый API отвечает text/plain, JSON API — application/json.
 func responseContentTypeMiddleware(next http.Handler, ct string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(ContentType, ct)
@@ -20,49 +23,97 @@ func responseContentTypeMiddleware(next http.Handler, ct string) http.Handler {
 	})
 }
 
+// gzipWriterPool — пул gzip.Writer. Создание писателя аллоцирует ~0,8 МБ
+// внутренних буферов компрессора flate (hashHead/hashPrev), поэтому раньше
+// каждый сжимаемый ответ платил эту цену заново. Reset гарантирует
+// эквивалентность NewWriter, что делает переиспользование безопасным.
+// Писатель извлекается лениво — при первом сжатом Write: на ответах без
+// сжатия (ошибки, 204/304) пул не задействуется вовсе.
+var gzipWriterPool = sync.Pool{
+	New: func() any {
+		return gzip.NewWriter(nil)
+	},
+}
+
 // compressWriter реализует интерфейс http.ResponseWriter и позволяет прозрачно для сервера
 // сжимать передаваемые данные и выставлять правильные HTTP-заголовки
 type compressWriter struct {
 	w           http.ResponseWriter
-	zw          *gzip.Writer
+	zw          *gzip.Writer // nil, пока сжатие не потребовалось; извлекается из пула при первом сжатом Write
 	wroteHeader bool
+	gzipOn      bool // gzip применён: тело пишется в zw и объявлено заголовком Content-Encoding
 }
 
+// newCompressWriter оборачивает http.ResponseWriter в сжимающую обёртку.
 func newCompressWriter(w http.ResponseWriter) *compressWriter {
-	return &compressWriter{
-		w:  w,
-		zw: gzip.NewWriter(w),
-	}
+	return &compressWriter{w: w}
 }
 
+// Header делегирует заголовки оригинальному writer'у, чтобы хендлеры
+// видели и меняли общую таблицу заголовков ответа.
 func (c *compressWriter) Header() http.Header {
 	return c.w.Header()
 }
 
+// Write пишет тело в gzip.Writer, если gzip применён (gzipOn),
+// иначе — напрямую в оригинальный writer. При первом вызове
+// неявно отправляет заголовок ответа (по умолчанию 200 OK).
 func (c *compressWriter) Write(p []byte) (int, error) {
 	if !c.wroteHeader {
 		c.WriteHeader(http.StatusOK)
 	}
 
-	return c.zw.Write(p)
+	// Тело пишем в gzip.Writer только если заголовок Content-Encoding выставлен;
+	// иначе — напрямую в оригинальный writer: ответ остаётся несжатым.
+	if c.gzipOn {
+		if c.zw == nil {
+			// Ленивая инициализация: писатель извлекается из пула только
+			// когда сжатие действительно началось.
+			c.zw = gzipWriterPool.Get().(*gzip.Writer)
+			c.zw.Reset(c.w)
+		}
+		return c.zw.Write(p)
+	}
+	return c.w.Write(p)
 }
 
+// WriteHeader отправляет код ответа и при необходимости включает gzip:
+// заголовок Content-Encoding выставляется только для успешных ответов
+// с телом; у 204/304 и ошибок тело уходит несжатым.
 func (c *compressWriter) WriteHeader(statusCode int) {
 	if c.wroteHeader {
 		return
 	}
 	c.wroteHeader = true
 
-	if statusCode < 300 {
+	// Gzip применяется только к успешным ответам с телом (< 300).
+	// Для ответов без тела (204 No Content, 304 Not Modified) gzip не применяется:
+	// закрытие gzip.Writer записало бы в пустой ответ gzip-заголовок и футер.
+	// Тела ошибок (>= 300) отправляются несжатыми: без заголовка Content-Encoding
+	// клиент читает текст ошибки напрямую, без распаковки.
+	if statusCode != http.StatusNoContent && statusCode != http.StatusNotModified && statusCode < 300 {
+		c.gzipOn = true
 		c.w.Header().Set("Content-Encoding", "gzip")
 	}
 
 	c.w.WriteHeader(statusCode)
 }
 
-// Close закрывает gzip.Writer и досылает все данные из буфера.
+// Close закрывает gzip.Writer и досылает все данные из буфера,
+// если gzip был применён к ответу.
 func (c *compressWriter) Close() error {
-	return c.zw.Close()
+	if c.zw == nil {
+		// Gzip не потребовался (ошибка, ответ без тела или без единого Write):
+		// писатель из пула не извлекался — возвращать нечего.
+		return nil
+	}
+	err := c.zw.Close()
+	// Reset(nil) разрывает ссылку на ResponseWriter, иначе пул удерживал бы
+	// ответ вместе с буферами; после Reset писатель пригоден к переиспользованию.
+	c.zw.Reset(nil)
+	gzipWriterPool.Put(c.zw)
+	c.zw = nil // защита от повторного Close
+	return err
 }
 
 // compressReader реализует интерфейс io.ReadCloser и позволяет прозрачно для сервера
@@ -72,6 +123,8 @@ type compressReader struct {
 	zr *gzip.Reader
 }
 
+// newCompressReader оборачивает тело запроса в распаковывающую обёртку.
+// Возвращает ошибку, если тело клиента не является корректным gzip-потоком.
 func newCompressReader(r io.ReadCloser) (*compressReader, error) {
 	zr, err := gzip.NewReader(r)
 	if err != nil {
@@ -84,10 +137,12 @@ func newCompressReader(r io.ReadCloser) (*compressReader, error) {
 	}, nil
 }
 
+// Read читает распакованные данные из gzip.Reader.
 func (c *compressReader) Read(p []byte) (n int, err error) {
 	return c.zr.Read(p)
 }
 
+// Close закрывает gzip.Reader и исходное тело запроса.
 func (c *compressReader) Close() error {
 	if err := c.r.Close(); err != nil {
 		return err
@@ -95,6 +150,9 @@ func (c *compressReader) Close() error {
 	return c.zr.Close()
 }
 
+// GzipMiddleware прозрачно сжимает ответы и распаковывает запросы.
+// Действует только для запросов с Content-Type text/plain или application/json:
+// для прочих тело запроса не распаковывается, а ответы уходят без сжатия.
 func GzipMiddleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// middleware используется только для разрешенных значений Content-Type запроса
@@ -127,7 +185,8 @@ func GzipMiddleware(h http.Handler) http.Handler {
 			// оборачиваем тело запроса в io.Reader с поддержкой декомпрессии
 			cr, err := newCompressReader(r.Body)
 			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
+				// Невалидное gzip-тело — ошибка клиента, а не сервера.
+				http.Error(w, "тело запроса не является корректным gzip-потоком", http.StatusBadRequest)
 				return
 			}
 			// меняем тело запроса на новое
@@ -140,13 +199,18 @@ func GzipMiddleware(h http.Handler) http.Handler {
 	})
 }
 
+// isValidRequestContentType проверяет, поддерживается ли Content-Type запроса
+// middleware сжатия.
 func isValidRequestContentType(ct string) bool {
 	return ct == TextPlain || ct == AppJSON
 }
 
 // Функциональность установки-извлечения cookie с ID пользователя
 
-func CookieMiddleware(storage UserStorage, params UserCookieParams) func(http.Handler) http.Handler {
+// CookieMiddleware возвращает middleware аутентификации по cookie с ID пользователя.
+// При отсутствии или невалидности cookie создаёт нового пользователя через
+// UserRegistrator и ставит cookie с JWT; валидная cookie с пустым ID — 401.
+func CookieMiddleware(log *zap.Logger, users UserRegistrator, params UserCookieParams) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var userID string
@@ -176,16 +240,16 @@ func CookieMiddleware(storage UserStorage, params UserCookieParams) func(http.Ha
 			}
 
 			if setNewCookie {
-				userID, err = storage.CreateUser(r.Context())
+				userID, err = users.CreateUser(r.Context())
 				if err != nil {
-					logger.Log.Error("user creating failed", zap.Error(err))
+					log.Error("ошибка создания пользователя", zap.Error(err))
 					w.WriteHeader(http.StatusInternalServerError)
 					return
 				}
 
 				responseCookieValue, err := auth.GenerateUserIDJWT(userID, params.UserCookieTTL, params.SigningKey)
 				if err != nil {
-					logger.Log.Error("JWT encrypting failed", zap.Error(err))
+					log.Error("ошибка шифрования JWT", zap.Error(err))
 					w.WriteHeader(http.StatusInternalServerError)
 					return
 				}
@@ -201,9 +265,9 @@ func CookieMiddleware(storage UserStorage, params UserCookieParams) func(http.Ha
 				})
 			} else { // setNewCookie == false
 				// userID содержит непустое значение. Проверим его
-				found, err := storage.CheckUserExists(r.Context(), userID)
+				found, err := users.CheckUserExists(r.Context(), userID)
 				if err != nil {
-					logger.Log.Error("user check in storage failed", zap.Error(err))
+					log.Error("ошибка проверки пользователя в хранилище", zap.Error(err))
 					w.WriteHeader(http.StatusInternalServerError)
 					return
 				}
@@ -215,7 +279,7 @@ func CookieMiddleware(storage UserStorage, params UserCookieParams) func(http.Ha
 				}
 			}
 
-			ctx := context.WithValue(r.Context(), params.userIDKey, userID)
+			ctx := context.WithValue(r.Context(), userIDKey, userID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
