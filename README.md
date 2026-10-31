@@ -188,6 +188,7 @@ go list -f '{{.ImportPath}}: {{.Doc}}' ./...
 | `-s` | Интервал сохранения состояния (резерв, не потребляется) | `1s` |
 | `-audit-file` | Путь к файловому приёмнику аудита | (нет, аудит отключён) |
 | `-audit-url` | URL удалённого приёмника аудита | (нет, аудит отключён) |
+| `-dead-letter-file` | Путь к dead-letter-файлу — журналу потерянных пар (токен, пользователь) | `emergency_dead_letter.log` во временном каталоге ОС |
 
 ### Переменные окружения
 
@@ -203,6 +204,7 @@ go list -f '{{.ImportPath}}: {{.Doc}}' ./...
 | `AUDIT_FILE` | Путь к файловому приёмнику аудита | (нет) |
 | `AUDIT_URL` | URL удалённого приёмника аудита | (нет) |
 | `SAVE_STATE_INTERVAL` | Интервал сохранения состояния (резерв) | `1s` |
+| `DEAD_LETTER_FILE` | Путь к dead-letter-файлу | `emergency_dead_letter.log` во временном каталоге ОС |
 
 Обязательные параметры — `SERVER_ADDRESS`, `BASE_URL`, `LOG_LEVEL`. Ключ
 `SIGNING_KEY` задаётся **только** переменной окружения; при его отсутствии сервис
@@ -238,7 +240,6 @@ postgres://url_shortener:SECRET@localhost:5432/url_shortener?sslmode=disable&poo
 | `DeletionQueueBuffer` | 1024 | Глубина канала очереди удалений |
 | `DeletionBatchSize` | 1024 | Размер батча асинхронного удаления |
 | `DeletionQueueFlushTimeout` | 10 с | Период сброса батча удалений |
-| `DeadLetterLogFile` | `emergency_dead_letter.log` | Файл потерянных пар (токен, пользователь) |
 | instance lock (БД) | 20260101 | Ключ `pg_try_advisory_lock` |
 | `auditCloseTimeout` | 10 с | Дедлайн доставки аудита при остановке |
 

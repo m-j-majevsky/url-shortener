@@ -112,7 +112,7 @@ type ShortenerConfig struct {
 	DeletionBatchSize         int           // размер батча для асинхронного удаления токенов
 	DeletionQueueFlushTimeout time.Duration // период сбрасывания запросов из канала на обработку в хранилище
 
-	DeadLetterLogFile string // имя файла, в который сохраняются пары (токен, юзер) не обработанные при запросе DELETE /api/user/urls
+	DeadLetterLogFile string // путь к dead-letter-файлу — журналу потерянных пар (токен, пользователь), не обработанных при запросе DELETE /api/user/urls
 
 	Logger *zap.Logger // логгер; если nil — используется no-op
 }
@@ -619,7 +619,9 @@ func (s *Shortener) StartItemsDeletionProcessor(ctx context.Context) {
 			if err := s.config.Storage.MarkUserURLsDeleted(flushCtx, batch); err != nil {
 				s.log.Error("ошибка хранилища при выполнении запроса пакетного удаления записей", zap.Error(err))
 				// Сохраняем в очередь данные, которые не удалось записать
-				s.writeToDeadLetterLog(NewUndeletedItemsFromReqBatch(batch))
+				if err := s.writeToDeadLetterLog(NewUndeletedItemsFromReqBatch(batch)); err != nil {
+					s.log.Error("ошибка записи в dead-letter-файл", zap.Error(err))
+				}
 
 				// TODO
 				// Точка расширения:

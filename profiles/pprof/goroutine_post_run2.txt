@@ -68,7 +68,7 @@ goroutine profile: total 16
 #	0x6efcbb	os/signal.NotifyContext.func1+0x7b	/usr/local/go/src/os/signal/signal.go:292
 
 1 @ 0x48b30e 0x467885 0x8e3351 0x8fd70f 0x492c81
-#	0x8e3350	github.com/m-j-majevsky/url-shortener/internal/service.(*Shortener).StartItemsDeletionProcessor+0x270	/home/nosov/go-pro/url-shortener/internal/service/shortner.go:632
+#	0x8e3350	github.com/m-j-majevsky/url-shortener/internal/service.(*Shortener).StartItemsDeletionProcessor+0x270	/home/nosov/go-pro/url-shortener/internal/service/shortener.go:632
 #	0x8fd70e	main.main.func3+0x4e											/home/nosov/go-pro/url-shortener/cmd/shortener/main.go:197
 
 1 @ 0x48b30e 0x467885 0x8fcb74 0x4540b5 0x492c81

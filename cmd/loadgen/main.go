@@ -10,6 +10,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -150,7 +151,8 @@ func main() {
 						continue
 					}
 					resp, err := client.Post(*base+"/api/shorten/batch", "application/json",
-						strings.NewReader(string(payload)))
+						bytes.NewReader(payload))
+
 					if err != nil {
 						record(0)
 						continue

@@ -51,10 +51,14 @@ func main() {
 	if err != nil && !errors.Is(err, config.ErrEmptySigningKey) {
 		log.Fatal(err)
 	}
+	var emptySigningKey bool
 	if errors.Is(err, config.ErrEmptySigningKey) {
 		// Т.к. автотесты на платформе должны стартовать со значениями по умолчанию,
 		// пока также добавлю ветвь с установкой ключа в явном виде
 		cfg.SigningKey = []byte(hardcodedSigningKey)
+		// Чтобы все логирование шло через package logger, с помощью флага defaultSigningKey
+		// откладываем вывод предупреждения до готовности логгера
+		emptySigningKey = true
 	}
 
 	parentLogger, err := logger.Initialize(cfg.LogLevel)
@@ -70,6 +74,10 @@ func main() {
 	serviceLogger := parentLogger.With(zap.String(component, "service"))
 	auditLogger := parentLogger.With(zap.String(component, "audit"))
 
+	if emptySigningKey {
+		mainLogger.Warn("переменная окружения SIGNING_KEY не задана, используется значение по умолчанию")
+	}
+
 	// pprof-сервер на отдельном порту — включается только переменной окружения.
 	if addr := os.Getenv("PPROF_ADDR"); addr != "" {
 		go func() {
@@ -82,11 +90,16 @@ func main() {
 
 	// Параметры сервиса собираются в main: конфиг самодостаточен и не знает о сервисе
 	svcConfig := service.DefaultShortenerConfig()
-
-	// Имя файла для логирования необработанных запросов DELETE /api/user/urls
-	// Задам хардкодом, пока не придумаю подходящее имя флага или переменной
-	svcConfig.DeadLetterLogFile = "emergency_dead_letter.log"
 	svcConfig.Logger = serviceLogger
+
+	// Проба записываемости dead-letter-файла на старте: недоступный путь должен
+	// отказать запуск немедленно, а не быть обнаруженным молча в момент первого
+	// сбоя хранилища. Побочный эффект — пустой файл создаётся сразу: оператору
+	// видно, куда пишется журнал.
+	if err := probeDeadLetterFile(cfg.DeadLetterLogFile); err != nil {
+		mainLogger.Fatal(err.Error(), zap.String("event", "probing dead-letter file"))
+	}
+	mainLogger.Info("dead-letter-файл готов к записи", zap.String("path", cfg.DeadLetterLogFile))
 
 	// Настройка аудита (паттерн «Наблюдатель»).
 	// Приёмники создаются только если соответствующий параметр конфигурации задан;
@@ -271,6 +284,16 @@ func main() {
 	}
 
 	mainLogger.Info("сервис остановлен", zap.String("event", "shutdown complete"))
+}
+
+// probeDeadLetterFile проверяет, что dead-letter-файл доступен для дозаписи:
+// открывает его (создавая при отсутствии) и сразу закрывает.
+func probeDeadLetterFile(path string) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("dead-letter-файл %q недоступен для дозаписи: %w", path, err)
+	}
+	return f.Close()
 }
 
 // Создаёт настроенный пул соединений и проверяет подключение.

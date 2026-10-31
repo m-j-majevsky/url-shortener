@@ -14,7 +14,7 @@ goroutine profile: total 14
 #	0x8db78c	internal/sync.(*Mutex).Lock+0xcc									/usr/local/go/src/internal/sync/mutex.go:70
 #	0x8db766	sync.(*Mutex).Lock+0xa6											/usr/local/go/src/sync/mutex.go:46
 #	0x8db765	github.com/m-j-majevsky/url-shortener/internal/repository.(*LocalStorage).CreateUser+0xa5		/home/nosov/go-pro/url-shortener/internal/repository/map_based_storage.go:349
-#	0x8e1048	github.com/m-j-majevsky/url-shortener/internal/service.(*Shortener).CreateUser+0x28			/home/nosov/go-pro/url-shortener/internal/service/shortner.go:345
+#	0x8e1048	github.com/m-j-majevsky/url-shortener/internal/service.(*Shortener).CreateUser+0x28			/home/nosov/go-pro/url-shortener/internal/service/shortener.go:345
 #	0x8e62c3	github.com/m-j-majevsky/url-shortener/internal/handler.NewRouter.func1.CookieMiddleware.3.1+0x103	/home/nosov/go-pro/url-shortener/internal/handler/middleware.go:221
 #	0x67c3c8	net/http.HandlerFunc.ServeHTTP+0x28									/usr/local/go/src/net/http/server.go:2286
 #	0x8d1125	github.com/go-chi/chi/v5.(*ChainHandler).ServeHTTP+0x25							/home/nosov/go/pkg/mod/github.com/go-chi/chi/v5@v5.3.1/chain.go:31
@@ -31,7 +31,7 @@ goroutine profile: total 14
 
 1 @ 0x4116b1 0x4246d3 0x8dac1d 0x8e138e 0x8e9d91 0x67c3c9 0x8d34ff 0x67c3c9 0x8ebeeb 0x67c3c9 0x8d19a3 0x8d2c9b 0x67c3c9 0x8e678b 0x67c3c9 0x8d1126 0x8d34ff 0x67c3c9 0x8e5102 0x67c3c9 0x8e6afb 0x67c3c9 0x8d1962 0x8e5365 0x69986e 0x67a830 0x492c81
 #	0x8dac1c	github.com/m-j-majevsky/url-shortener/internal/repository.(*LocalStorage).BatchStore+0x19c			/home/nosov/go-pro/url-shortener/internal/repository/map_based_storage.go:286
-#	0x8e138d	github.com/m-j-majevsky/url-shortener/internal/service.(*Shortener).BatchStore+0x28d				/home/nosov/go-pro/url-shortener/internal/service/shortner.go:379
+#	0x8e138d	github.com/m-j-majevsky/url-shortener/internal/service.(*Shortener).BatchStore+0x28d				/home/nosov/go-pro/url-shortener/internal/service/shortener.go:379
 #	0x8e9d90	github.com/m-j-majevsky/url-shortener/internal/handler.(*Router).shortenBatch+0x770				/home/nosov/go-pro/url-shortener/internal/handler/router.go:483
 #	0x67c3c8	net/http.HandlerFunc.ServeHTTP+0x28										/usr/local/go/src/net/http/server.go:2286
 #	0x8d34fe	github.com/go-chi/chi/v5.(*Mux).routeHTTP+0x4fe									/home/nosov/go/pkg/mod/github.com/go-chi/chi/v5@v5.3.1/mux.go:483
@@ -129,7 +129,7 @@ goroutine profile: total 14
 #	0x6efcbb	os/signal.NotifyContext.func1+0x7b	/usr/local/go/src/os/signal/signal.go:292
 
 1 @ 0x48b30e 0x467885 0x8e3351 0x8fd70f 0x492c81
-#	0x8e3350	github.com/m-j-majevsky/url-shortener/internal/service.(*Shortener).StartItemsDeletionProcessor+0x270	/home/nosov/go-pro/url-shortener/internal/service/shortner.go:632
+#	0x8e3350	github.com/m-j-majevsky/url-shortener/internal/service.(*Shortener).StartItemsDeletionProcessor+0x270	/home/nosov/go-pro/url-shortener/internal/service/shortener.go:632
 #	0x8fd70e	main.main.func3+0x4e											/home/nosov/go-pro/url-shortener/cmd/shortener/main.go:197
 
 1 @ 0x48b30e 0x467885 0x8fcb74 0x4540b5 0x492c81

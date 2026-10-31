@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -25,6 +26,7 @@ type ApplicationConfig struct {
 	ShutdownTimeout   time.Duration // время на graceful shutdown
 	AuditFile         string        // путь к файлу-приёмнику аудита; пусто — аудит в файл отключён
 	AuditURL          string        // URL удалённого приёмника аудита; пусто — аудит на удалённый сервер отключён
+	DeadLetterLogFile string        // путь к dead-letter-файлу — журналу потерянных пар (токен, пользователь)
 }
 
 // LoadApplicationConfig загружает конфигурацию из переменных окружения
@@ -80,6 +82,12 @@ func readApplicationConfig() (ApplicationConfig, error) {
 		defaultSaveState = time.Second // дефолт флага -s
 	)
 
+	// Дефолт пути dead-letter-файла вычисляется, а не задаётся константой:
+	// os.TempDir учитывает переменную окружения TMPDIR. Путь абсолютный —
+	// файл не зависит от рабочей директории процесса (важно под systemd
+	// и в контейнерах, где рабочая директория может оказаться недоступной).
+	defaultDeadLetterFile := filepath.Join(os.TempDir(), "emergency_dead_letter.log")
+
 	// Шаг 2: парсим флаги с жёсткими дефолтами.
 	flag.StringVar(&cfg.ServerRunAddress, "a", defaultRunAddr, "адрес и порт для запуска сервера")
 	flag.StringVar(&cfg.TargetBaseURL, "b", defaultBaseURL, "базовый путь целевого URL")
@@ -93,6 +101,7 @@ func readApplicationConfig() (ApplicationConfig, error) {
 	flag.DurationVar(&cfg.SaveStateInterval, "s", defaultSaveState, "интервал сохранения состояния (зарезервировано, не используется)")
 	flag.StringVar(&cfg.AuditFile, "audit-file", "", "путь к файловому приёмнику аудита; пустое значение отключает файловый аудит")
 	flag.StringVar(&cfg.AuditURL, "audit-url", "", "URL удалённого приёмника аудита; пустое значение отключает удалённый аудит")
+	flag.StringVar(&cfg.DeadLetterLogFile, "dead-letter-file", defaultDeadLetterFile, "путь к dead-letter-файлу — журналу потерянных пар (токен, пользователь)")
 	flag.Parse()
 
 	// Шаг 3: переменные окружения перекрывают флаги.
@@ -104,6 +113,7 @@ func readApplicationConfig() (ApplicationConfig, error) {
 	cfg.CookieUserIDName = envOr("COOKIE_USER_ID", cfg.CookieUserIDName)
 	cfg.AuditFile = envOr("AUDIT_FILE", cfg.AuditFile)
 	cfg.AuditURL = envOr("AUDIT_URL", cfg.AuditURL)
+	cfg.DeadLetterLogFile = envOr("DEAD_LETTER_FILE", cfg.DeadLetterLogFile)
 
 	// Ключ подписи JWT: только из env, флагом не параметризуется.
 	// Валидация требует непустого значения; хардкод по умолчанию
