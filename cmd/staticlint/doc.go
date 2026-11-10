@@ -9,7 +9,7 @@
 //
 //	make staticlint                      # эквивалентно двум командам ниже
 //	go build -o bin/staticlint ./cmd/staticlint
-//	bin/staticlint ./cmd/shortener ./cmd/loadgen ./internal/...  ./migrations
+//	bin/staticlint ./cmd/shortener ./cmd/loadgen ./internal/... ./migrations
 //
 // Линтер не проверяет собственный main-пакет cmd/staticlint: его граф
 // зависимостей (x/tools, staticcheck, errcheck, exhaustive) огромен и
@@ -42,6 +42,11 @@
 // флаг имеет приоритет. Имена, не входящие в собранный набор, приводят
 // к ошибке запуска — так опечатка в конфиге не даёт молча пропустить
 // проверку.
+//
+// В корне проекта лежит config.json с исключением анализатора shadow:
+// диагностика затенения объявлений в идиоме if err := ...; err != nil
+// даёт шум без реальных ошибок. Встроенный набор, описанный ниже,
+// остаётся полным — конфигурация фильтрует его на этапе запуска.
 //
 // Значение флага читается предсканом os.Args до вызова multichecker.Main:
 // полноценный flag.Parse выполняется внутри multichecker, поэтому до него
