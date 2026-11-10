@@ -218,7 +218,9 @@ func (s *Shortener) CleanUp() {
 	defer s.deadLetterLogFileMutex.Unlock()
 
 	if s.deadLetterLogFile != nil {
-		s.deadLetterLogFile.Close()
+		if err := s.deadLetterLogFile.Close(); err != nil {
+			s.config.Logger.Error("ошибка закрытия dead-letter-файла", zap.Error(err))
+		}
 		s.deadLetterLogFile = nil
 	}
 }

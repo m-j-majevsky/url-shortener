@@ -20,6 +20,7 @@ HTTP-сервис сокращения длинных ссылок. Пользо
   - [Подключение к PostgreSQL](#подключение-к-postgresql)
   - [Параметры, не задаваемые извне](#параметры-не-задаваемые-извне)
 - [Миграции базы данных](#миграции-базы-данных)
+- [Статический анализатор (cmd/staticlint)](#статический-анализатор-cmdstaticlint)
 - [Тестирование](#тестирование)
   - [Команды Make для тестов](#команды-make-для-тестов)
   - [Ручной запуск тестов](#ручной-запуск-тестов)
@@ -82,6 +83,7 @@ URL, генерирует токен из [0-9a-zA-Z] (base62) длиной 6–
 | `make cover-html` | HTML-отчёт покрытия |
 | `make bench` | Прогнать все бенчмарки (юнит-тесты отключены, с аллокациями) |
 | `make loadgen` | Собрать генератор нагрузки в `bin/loadgen` |
+| `make staticlint` | Собрать и прогнать собственный статический анализатор (`cmd/staticlint`) |
 | `make mocks` | Сгенерировать моки через mockery |
 | `make tidy` | `go mod tidy` |
 | `make fmt` | `gofmt -s -w .` — по всем файлам, включая файлы под build-тегами |
@@ -257,6 +259,26 @@ postgres://url_shortener:SECRET@localhost:5432/url_shortener?sslmode=disable&poo
 - **users** — пользователи (UUID генерируется на стороне БД).
 
 Подробно — в [ARCHITECTURE.md](ARCHITECTURE.md), раздел «Схема базы данных».
+
+## Статический анализатор (cmd/staticlint)
+
+Собственный объединённый линтер `url-shortener`: стандартный vet-набор плюс
+`shadow`, классы `SA`/`ST` staticcheck, публичные `errcheck` и `exhaustive`
+и собственный анализатор `exitinmain` (запрет прямого `os.Exit` в `main`).
+Подробный состав, механика флага `-config` и встроенные исключения errcheck
+описаны в godoc пакета: `go doc ./cmd/staticlint` или
+[cmd/staticlint/doc.go](cmd/staticlint/doc.go).
+
+Запуск:
+
+```bash
+make staticlint
+```
+
+Сам линтер не проверяет собственный `cmd/staticlint` (его граф зависимостей —
+x/tools и staticcheck — не является кодом проекта), поэтому список пакетов
+прогона задаёт переменная `STATICLINT_PKGS` в Makefile. Конфиг исключений —
+`config.json` в корне проекта, сейчас погашен только анализатор `shadow`.
 
 ## Тестирование
 

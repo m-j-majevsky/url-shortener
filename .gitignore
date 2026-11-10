@@ -37,4 +37,4 @@ batch_req.json
 emergency_dead_letter.log
 storage_state.*
 audit.json
-
+staticcheck.conf
