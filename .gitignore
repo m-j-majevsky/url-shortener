@@ -7,6 +7,7 @@
 *.o
 bin/*
 docdump.sh
+reset
 
 # Test binary, built with `go test -c`
 *.test
