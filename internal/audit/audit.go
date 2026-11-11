@@ -37,6 +37,7 @@ const (
 )
 
 // AuditEvent — событие аудита.
+// generate:reset;
 type AuditEvent struct {
 	TS     int64  `json:"ts"`
 	Action string `json:"action"`

@@ -16,6 +16,7 @@
 #   make cover                           # итоговый процент покрытия (без моков, cmd, migrations)
 #   make cover-html                      # HTML-отчёт покрытия (без моков, cmd, migrations)
 #   make mocks                           # сгенерировать моки через mockery
+#   make generate                        # сгенерировать Reset() по маркерам // generate:reset;
 #   make tidy                            # go mod tidy
 #   make fmt                             # gofmt -s -w по всем файлам проекта
 #   make fmt-imports                     # gofmt + goimports (автоустановка goimports)
@@ -38,8 +39,15 @@ MAIN_PKG := ./cmd/shortener
 
 # Статический анализатор: сам линтер не проверяет собственный main-пакет —
 # его граф зависимостей (x/tools, staticcheck) огромен и не является кодом проекта.
-STATICLINT      := bin/staticlint
-STATICLINT_PKGS := ./cmd/shortener ./cmd/loadgen ./internal/... ./migrations
+# Список пакетов разбит на две группы: multichecker за один прогон грузит полный
+# граф зависимостей всех перечисленных пакетов (с типами и синтаксисом), и
+# объединённый список не помещается в память — процесс убивается OOM-killer'ом
+# (make печатает Killed). Группы подобраны так, чтобы каждый прогон умещался
+# по отдельности (проверено): основной граф проекта и граф cmd/reset,
+# тянущий golang.org/x/tools.
+STATICLINT        := bin/staticlint
+STATICLINT_PKGS   := ./cmd/shortener ./cmd/loadgen ./internal/... ./migrations
+STATICLINT_PKGS_2 := ./cmd/reset
 
 # Инструменты форматирования
 GOFMT     := gofmt
@@ -54,7 +62,7 @@ COVER_EXCLUDE := -e '/mocks/' -e '/cmd/shortener/' -e '/migrations/'
 VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -X main.version=$(VERSION)
 
-.PHONY: all build run test test-integration test-pkg test-v cover cover-html mocks tidy fmt fmt-imports fmt-check vet lint bench loadgen staticlint clean
+.PHONY: all build run test test-integration test-pkg test-v cover cover-html mocks generate tidy fmt fmt-imports fmt-check vet lint bench loadgen staticlint clean
 
 # ---- Комплексные цели ----
 
@@ -103,6 +111,16 @@ cover-html:
 mocks:
 	mockery
 
+# ---- Генератор Reset ----
+
+# Утилита cmd/reset обходит пакеты проекта и генерирует методы Reset()
+# для структур с маркером // generate:reset; (файлы reset.gen.go).
+# Запуск вручную после изменения помеченных структур — по аналогии с mocks:
+# сгенерированные файлы коммитятся, а не собираются на лету.
+# Короткий прогон — go run; go build не нужен, утилита одноразовая.
+generate:
+	go run ./cmd/reset .
+
 # ---- Модули ----
 
 tidy:
@@ -149,6 +167,7 @@ loadgen:
 staticlint:
 	go build -o $(STATICLINT) ./cmd/staticlint
 	$(STATICLINT) $(STATICLINT_PKGS)
+	$(STATICLINT) $(STATICLINT_PKGS_2)
 
 # ---- Очистка ----
 
