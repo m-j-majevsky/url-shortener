@@ -65,7 +65,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer parentLogger.Sync()
+	// Sync() в defer: flush буферов при завершении; ошибка
+	// (например, на не-tty stdout) не влияет на корректность работы — осознанный игнор.
+	defer func() { _ = parentLogger.Sync() }()
 
 	const component = "component"
 	mainLogger := parentLogger.With(zap.String(component, "main"))
@@ -159,7 +161,12 @@ func main() {
 		}
 		mainLogger.Info("instance lock захвачен")
 		defer func() {
-			lockConn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", instanceLockKey)
+			// Ошибку unlock логируем, но не считаем фатальной: lock всё равно
+			// освободится при закрытии пула (снятие session-level lock при разрыве
+			// коннекта — гарантия PostgreSQL).
+			if _, uerr := lockConn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", instanceLockKey); uerr != nil {
+				mainLogger.Warn("не удалось снять advisory lock — он освободится при закрытии пула", zap.Error(uerr))
+			}
 			lockConn.Release()
 		}()
 
@@ -367,7 +374,8 @@ func acquireFileLock(path string) (*os.File, error) {
 	if err == nil {
 		return f, nil
 	}
-	f.Close()
+	// Мы уже в ветке ошибки Flock; ошибка Close не изменит исход — осознанный игнор.
+	_ = f.Close()
 	if errors.Is(err, syscall.EWOULDBLOCK) {
 		return nil, errors.New("другой инстанс url-shortener уже запущен — запуск отменён")
 	}

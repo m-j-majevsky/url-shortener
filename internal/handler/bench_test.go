@@ -85,7 +85,7 @@ func BenchmarkGzipMiddleware(b *testing.B) {
 		{"gzip_error_409", true, benchConflictHandler},
 	} {
 		b.Run(tc.name, func(b *testing.B) {
-			h := GzipMiddleware(tc.target())
+			h := GzipMiddleware(zap.NewNop())(tc.target())
 			req := newBenchRequest("/api/user/urls", tc.gzipped)
 			b.ReportAllocs()
 			b.ResetTimer()
@@ -140,7 +140,7 @@ func BenchmarkLoggingMiddleware(b *testing.B) {
 // WithLogging обёрнута снаружи GzipMiddleware (порядок Use в NewRouter).
 // Итоговая цена middleware-слоя, который несёт каждый запрос.
 func BenchmarkFullChain(b *testing.B) {
-	h := logger.WithLogging(zap.NewNop())(GzipMiddleware(benchTargetHandler()))
+	h := logger.WithLogging(zap.NewNop())(GzipMiddleware(zap.NewNop())(benchTargetHandler()))
 
 	req := newBenchRequest("/api/user/urls", true)
 	b.ReportAllocs()

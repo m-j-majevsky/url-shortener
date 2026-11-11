@@ -41,7 +41,7 @@ func TestNewFileSink(t *testing.T) {
 		// Второй приёмник открывает тот же файл: дозапись, а не перезапись.
 		sink2, err := NewFileSink(path)
 		require.NoError(t, err)
-		defer sink2.Close()
+		defer func() { _ = sink2.Close() }()
 		require.NoError(t, sink2.Send(AuditEvent{TS: 2, Action: ActionFollow}))
 
 		data, err := os.ReadFile(path)
@@ -122,7 +122,7 @@ func TestFileSink_Send_WritesOneLine(t *testing.T) {
 
 			sink, err := NewFileSink(path)
 			require.NoError(t, err)
-			defer sink.Close()
+			defer func() { _ = sink.Close() }()
 
 			for _, event := range tt.events {
 				require.NoError(t, sink.Send(event))
@@ -163,7 +163,7 @@ func TestFileSink_Send_Concurrent(t *testing.T) {
 
 	sink, err := NewFileSink(path)
 	require.NoError(t, err)
-	defer sink.Close()
+	defer func() { _ = sink.Close() }()
 
 	var wg sync.WaitGroup
 	for i := 0; i < goroutines; i++ {

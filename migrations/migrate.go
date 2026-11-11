@@ -28,7 +28,9 @@ var migrations embed.FS
 // подключения dsn вида "postgres://user:pass@host:5432/db?sslmode=disable".
 // Повторный запуск ничего не меняет: состояние «миграций нет»
 // (migrate.ErrNoChange) трактуется как успех.
-func RunMigrations(_ context.Context, dsn string) error {
+// err — named return: defer-блоки Close дописывают в него ошибку закрытия,
+// только если основная фаза уже не вернула свою (приоритет главной ошибки).
+func RunMigrations(_ context.Context, dsn string) (err error) {
 	src, err := iofs.New(migrations, ".")
 	if err != nil {
 		return fmt.Errorf("ошибка доступа к источнику данных миграции: %w", err)
@@ -45,7 +47,13 @@ func RunMigrations(_ context.Context, dsn string) error {
 	if err != nil {
 		return fmt.Errorf("ошибка доступа к pgx через интерфейс sql.DB: %w", err)
 	}
-	defer db.Close()
+	// Порядок defer (LIFO) осознанный: сначала закроется драйвер
+	// миграций, потом соединение.
+	defer func() {
+		if cerr := db.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("ошибка закрытия соединения после миграций: %w", cerr)
+		}
+	}()
 
 	// pgxmigrate.WithInstance превращает *sql.DB в database.Driver для migrate.
 	dbDriver, err := pgxmigrate.WithInstance(db, &pgxmigrate.Config{})
@@ -57,7 +65,17 @@ func RunMigrations(_ context.Context, dsn string) error {
 	if err != nil {
 		return fmt.Errorf("ошибка создания инстанса миграции: %w", err)
 	}
-	defer m.Close()
+	defer func() {
+		// Migrate.Close возвращает две ошибки: закрытие источника миграций и БД.
+		serr, derr := m.Close()
+		if err == nil {
+			if serr != nil {
+				err = fmt.Errorf("ошибка закрытия источника миграций: %w", serr)
+			} else if derr != nil {
+				err = fmt.Errorf("ошибка закрытия драйвера миграций: %w", derr)
+			}
+		}
+	}()
 
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
 		return fmt.Errorf("ошибка migrate up: %w", err)

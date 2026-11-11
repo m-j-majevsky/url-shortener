@@ -190,7 +190,7 @@ func NewRouter(params RouterParams) *Router {
 	cr := chi.NewRouter()
 
 	cr.Use(logger.WithLogging(log))
-	cr.Use(GzipMiddleware)
+	cr.Use(GzipMiddleware(log))
 
 	mux := &Router{
 		mux:     cr,
@@ -372,7 +372,9 @@ func (rt *Router) shortenLongURLForText(w http.ResponseWriter, r *http.Request) 
 
 	w.WriteHeader(resCode)
 	resBody := fmt.Sprintf("%s/%s", rt.baseURL, token)
-	io.WriteString(w, resBody)
+	// Ошибка записи в ResponseWriter невосстановима (клиент отключился)
+	// и не является багом сервера — осознанный игнор.
+	_, _ = io.WriteString(w, resBody)
 
 	// Аудит: запрос обработан успешно — отправляем shorten-событие с оригинальным URL.
 	// Успешной считается и обработка с ответом 409 Conflict: ссылка зарегистрирована,

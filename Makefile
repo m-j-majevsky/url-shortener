@@ -26,6 +26,7 @@
 #   make all                             # lint + build + test
 #   make bench                           # прогнать бенчмарки (encoding, service, repository, handler)
 #   make loadgen                         # собрать генератор нагрузки в ./bin/loadgen
+#   make staticlint                      # собрать и прогнать статический анализатор
 #
 # Миграции не требуют отдельной цели: SQL-скрипты встроены в бинарник
 # (go:embed в migrations/migrate.go) и накатываются автоматически при старте
@@ -34,6 +35,11 @@
 
 BINARY   := bin/shortener
 MAIN_PKG := ./cmd/shortener
+
+# Статический анализатор: сам линтер не проверяет собственный main-пакет —
+# его граф зависимостей (x/tools, staticcheck) огромен и не является кодом проекта.
+STATICLINT      := bin/staticlint
+STATICLINT_PKGS := ./cmd/shortener ./cmd/loadgen ./internal/... ./migrations
 
 # Инструменты форматирования
 GOFMT     := gofmt
@@ -48,7 +54,7 @@ COVER_EXCLUDE := -e '/mocks/' -e '/cmd/shortener/' -e '/migrations/'
 VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -X main.version=$(VERSION)
 
-.PHONY: all build run test test-integration test-pkg test-v cover cover-html mocks tidy fmt fmt-imports fmt-check vet lint bench loadgen clean
+.PHONY: all build run test test-integration test-pkg test-v cover cover-html mocks tidy fmt fmt-imports fmt-check vet lint bench loadgen staticlint clean
 
 # ---- Комплексные цели ----
 
@@ -139,8 +145,13 @@ bench:
 loadgen:
 	go build -o bin/loadgen ./cmd/loadgen
 
+# Сборка и прогон собственного статического анализатора (см. cmd/staticlint).
+staticlint:
+	go build -o $(STATICLINT) ./cmd/staticlint
+	$(STATICLINT) $(STATICLINT_PKGS)
+
 # ---- Очистка ----
 
 
 clean:
-	rm -f $(BINARY) $(COVER) $(COVER_F)
+	rm -f $(BINARY) $(STATICLINT) $(COVER) $(COVER_F)

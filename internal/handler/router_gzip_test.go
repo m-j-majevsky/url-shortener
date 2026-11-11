@@ -71,7 +71,7 @@ func probeGzip(client *http.Client, method, url, reqCT, body string, acceptGzip 
 		if err != nil {
 			return nil, fmt.Errorf("создание gzip-ридера: %w", err)
 		}
-		defer zr.Close()
+		defer func() { _ = zr.Close() }()
 		raw, err := io.ReadAll(zr)
 		if err != nil {
 			return nil, fmt.Errorf("чтение сжатого тела: %w", err)
