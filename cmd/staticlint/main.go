@@ -206,7 +206,7 @@ func applyConfig(all []*analysis.Analyzer, path string) ([]*analysis.Analyzer, e
 // Значение флага читается предсканом os.Args (configPathFromArgs), так как
 // настоящий flag.Parse происходит уже внутри multichecker.Main — после
 // того, как набор анализаторов собран и отфильтрован. Флаг не задан —
-// используется config.json из текущего каталога, если он существует (см. run).
+// используется config.json из текущего каталога, если он существует (см. setup).
 var configFlag = flag.String("config", "",
 	"путь к JSON-файлу конфигурации набора анализаторов (см. godoc)")
 
@@ -237,9 +237,12 @@ func configPathFromArgs(args []string) string {
 	return ""
 }
 
-func run() error {
+// setup выполняет всю подготовительную работу: подключает зашитый список
+// исключений errcheck, собирает полный набор анализаторов и фильтрует его
+// конфигурацией.
+func setup() ([]*analysis.Analyzer, error) {
 	if err := defaultErrcheckExclude(); err != nil {
-		return err
+		return nil, err
 	}
 	all := collectAnalyzers()
 	path := configPathFromArgs(os.Args)
@@ -251,18 +254,19 @@ func run() error {
 	if path != "" {
 		var err error
 		if all, err = applyConfig(all, path); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if len(all) == 0 {
-		return errors.New("набор анализаторов пуст")
+		return nil, errors.New("набор анализаторов пуст")
 	}
-	multichecker.Main(all...)
-	return nil
+	return all, nil
 }
 
 func main() {
-	if err := run(); err != nil {
+	all, err := setup()
+	if err != nil {
 		log.Fatal(err)
 	}
+	multichecker.Main(all...)
 }
