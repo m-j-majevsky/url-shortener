@@ -75,7 +75,7 @@ URL, генерирует токен из [0-9a-zA-Z] (base62) длиной 6–
 
 | Команда | Описание |
 |---|---|
-| `make build` | Собрать бинарник в `./bin/shortener` (с `-ldflags`-версией) |
+| `make build` | Собрать бинарник в `./bin/shortener` (с заливкой build-информации через `-ldflags`) |
 | `make run` | Собрать и запустить (нужны env-переменные или флаги) |
 | `make test` | Запустить все тесты (без интеграционных) |
 | `make test-v` | Все тесты с verbose-выводом |
@@ -105,9 +105,36 @@ make all
 
 ### Сборка вручную
 
+Голая сборка — без заливки build-информации: при старте все три значения
+выводятся как `N/A`:
+
 ```bash
 go build -o ./bin/shortener ./cmd/shortener
 ```
+
+Сборка с заливкой — те же три `-X`, что в цели `build` Makefile
+(переменные `VERSION`, `BUILD_DATE`, `COMMIT`):
+
+```bash
+go build -o ./bin/shortener \
+  -ldflags "-X main.buildVersion=$(git describe --tags --always --dirty 2>/dev/null || echo dev) \
+  -X main.buildDate=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+  -X main.buildCommit=$(git rev-parse --short HEAD 2>/dev/null)" \
+  ./cmd/shortener
+```
+
+При старте сервис печатает сборочную информацию в stdout:
+
+```
+Build version: v1.2.3-3-g9f8e7d6.dirty
+Build date: 2026-11-12T10:00:00Z
+Build commit: a1b2c3d
+```
+
+Пустое значение любой переменной (сборка без `-ldflags`) всегда
+отображается как `N/A` — это контракт форматтера `buildInfo` в
+[cmd/shortener/main.go](cmd/shortener/main.go), а не значение переменных.
+
 
 ### Запуск сервиса
 

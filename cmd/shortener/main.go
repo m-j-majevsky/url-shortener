@@ -31,9 +31,17 @@ import (
 	"go.uber.org/zap"
 )
 
-// version — версия бинарника, заливается при сборке через
-// -ldflags "-X main.version=$(VERSION)" (см. Makefile).
-var version = "dev"
+// buildVersion, buildDate и buildCommit — сборочная информация бинарника.
+// Все три заливаются при сборке флагами линковщика:
+//
+//	-ldflags "-X main.buildVersion=... -X main.buildDate=... -X main.buildCommit=..."
+//
+// (см. цель build в Makefile).
+var (
+	buildVersion string
+	buildDate    string
+	buildCommit  string
+)
 
 // auditCloseTimeout — дедлайн ожидания доставки событий аудита при завершении
 // работы сервиса. Согласован по порядку величины с ShutdownTimeout: за это время
@@ -47,6 +55,9 @@ const auditCloseTimeout = 10 * time.Second
 const hardcodedSigningKey = "jwt-signing-super-secret"
 
 func main() {
+	// Сборочная информация печатается в stdout напрямую через fmt.
+	fmt.Println(buildInfo())
+
 	cfg, err := config.LoadApplicationConfig()
 	if err != nil && !errors.Is(err, config.ErrEmptySigningKey) {
 		log.Fatal(err)
@@ -292,6 +303,25 @@ func main() {
 	}
 
 	mainLogger.Info("сервис остановлен", zap.String("event", "shutdown complete"))
+}
+
+// buildInfo формирует сообщение о сборочной информации для вывода при старте:
+// три строки с версией, датой и хешем коммита сборки. Пустое значение любой
+// переменной (сборка без -ldflags) отображается как "N/A".
+func buildInfo() string {
+	return fmt.Sprintf(
+		"Build version: %s\nBuild date: %s\nBuild commit: %s",
+		orNA(buildVersion), orNA(buildDate), orNA(buildCommit),
+	)
+}
+
+// orNA заменяет пустую строку на "N/A" — признак отсутствия сборочной
+// информации (см. buildInfo).
+func orNA(value string) string {
+	if value == "" {
+		return "N/A"
+	}
+	return value
 }
 
 // probeDeadLetterFile проверяет, что dead-letter-файл доступен для дозаписи:

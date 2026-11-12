@@ -7,7 +7,7 @@
 # make test-pkg PKG=./internal/handler   # тесты одного пакета
 #
 # Использование (подробно):
-#   make build                           # собрать бинарник в ./bin/shortener
+#   make build                           # собрать бинарник в ./bin/shortener (с заливкой build-информации)
 #   make run                             # собрать и запустить (нужны env-переменные или флаги)
 #   make test                            # запустить все тесты (без интеграционных)
 #   make test-integration                # интеграционные тесты (нужен Docker с postgres:16-alpine)
@@ -58,9 +58,14 @@ COVER_F  := coverage_filtered.out
 # Пакеты, исключаемые из подсчёта покрытия
 COVER_EXCLUDE := -e '/mocks/' -e '/cmd/shortener/' -e '/migrations/'
 
-# Версия (из git или fallback)
-VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS  := -X main.version=$(VERSION)
+# Сборочная информация: версия (из git или fallback), дата сборки в UTC
+# (RFC 3339) и короткий хеш коммита. При отсутствии git-репозитория COMMIT
+# остаётся пустым — при выводе при старте пустые значения показываются как
+# "N/A" (см. buildInfo в cmd/shortener/main.go), сборка без заливки различима.
+VERSION    := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+BUILD_DATE := $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
+COMMIT     := $(shell git rev-parse --short HEAD 2>/dev/null)
+LDFLAGS    := -X main.buildVersion=$(VERSION) -X main.buildDate=$(BUILD_DATE) -X main.buildCommit=$(COMMIT)
 
 .PHONY: all build run test test-integration test-pkg test-v cover cover-html mocks generate tidy fmt fmt-imports fmt-check vet lint bench loadgen staticlint clean
 
