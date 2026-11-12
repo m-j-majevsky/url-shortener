@@ -46,7 +46,7 @@ MAIN_PKG := ./cmd/shortener
 # по отдельности (проверено): основной граф проекта и граф cmd/reset,
 # тянущий golang.org/x/tools.
 STATICLINT        := bin/staticlint
-STATICLINT_PKGS   := ./cmd/shortener ./cmd/loadgen ./internal/... ./migrations
+STATICLINT_PKGS   := ./cmd/shortener ./cmd/loadgen ./internal/... ./migrations ./pkg/...
 STATICLINT_PKGS_2 := ./cmd/reset
 
 # Инструменты форматирования
