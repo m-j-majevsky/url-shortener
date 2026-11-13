@@ -7,6 +7,7 @@
 *.o
 bin/*
 docdump.sh
+reset
 
 # Test binary, built with `go test -c`
 *.test
@@ -37,4 +38,4 @@ batch_req.json
 emergency_dead_letter.log
 storage_state.*
 audit.json
-
+staticcheck.conf

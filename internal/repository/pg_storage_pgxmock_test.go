@@ -36,7 +36,7 @@ const (
 
 func TestPgStorage_Ping_Success(t *testing.T) {
 	repo, mock := newMockPgStorage(t)
-	defer mock.Close(t.Context())
+	defer func() { _ = mock.Close(t.Context()) }()
 
 	mock.ExpectPing().
 		Times(1)
@@ -48,7 +48,7 @@ func TestPgStorage_Ping_Success(t *testing.T) {
 
 func TestPgStorage_Ping_Failed(t *testing.T) {
 	repo, mock := newMockPgStorage(t)
-	defer mock.Close(t.Context())
+	defer func() { _ = mock.Close(t.Context()) }()
 
 	mock.ExpectPing().
 		WillDelayFor(1 * time.Second).
@@ -63,7 +63,7 @@ func TestPgStorage_Ping_Failed(t *testing.T) {
 
 func TestPgStorage_Resolve_Success(t *testing.T) {
 	repo, mock := newMockPgStorage(t)
-	defer mock.Close(t.Context())
+	defer func() { _ = mock.Close(t.Context()) }()
 
 	// is_deleted в схеме NOT NULL: "не удалено" = false.
 	// (В bak стояло nil — скан NULL в *bool в pgx даёт ошибку.)
@@ -80,7 +80,7 @@ func TestPgStorage_Resolve_Success(t *testing.T) {
 
 func TestPgStorage_Resolve_ErrTokenNotFound(t *testing.T) {
 	repo, mock := newMockPgStorage(t)
-	defer mock.Close(t.Context())
+	defer func() { _ = mock.Close(t.Context()) }()
 
 	mock.ExpectQuery(`SELECT original_url, is_deleted FROM shorten_urls WHERE token = \$1`).
 		WithArgs(tok).
@@ -94,7 +94,7 @@ func TestPgStorage_Resolve_ErrTokenNotFound(t *testing.T) {
 
 func TestPgStorage_Resolve_ErrTokenIsDeleted(t *testing.T) {
 	repo, mock := newMockPgStorage(t)
-	defer mock.Close(t.Context())
+	defer func() { _ = mock.Close(t.Context()) }()
 
 	rows := mock.NewRows([]string{"original_url", "is_deleted"}).AddRow(url, true)
 	mock.ExpectQuery(`SELECT original_url, is_deleted FROM shorten_urls WHERE token = \$1`).
@@ -111,7 +111,7 @@ func TestPgStorage_Resolve_ErrTokenIsDeleted(t *testing.T) {
 
 func TestPgStorage_Store_Success(t *testing.T) {
 	repo, mock := newMockPgStorage(t)
-	defer mock.Close(t.Context())
+	defer func() { _ = mock.Close(t.Context()) }()
 
 	var userUIID pgtype.UUID
 	require.NoError(t, userUIID.Scan(userID))
@@ -127,7 +127,7 @@ func TestPgStorage_Store_Success(t *testing.T) {
 
 func TestPgStorage_Store_ErrTokensTaken(t *testing.T) {
 	repo, mock := newMockPgStorage(t)
-	defer mock.Close(t.Context())
+	defer func() { _ = mock.Close(t.Context()) }()
 
 	var userUIID pgtype.UUID
 	require.NoError(t, userUIID.Scan(userID))
@@ -144,7 +144,7 @@ func TestPgStorage_Store_ErrTokensTaken(t *testing.T) {
 
 func TestPgStorage_Store_ErrOriginalURLExists(t *testing.T) {
 	repo, mock := newMockPgStorage(t)
-	defer mock.Close(t.Context())
+	defer func() { _ = mock.Close(t.Context()) }()
 
 	var userUIID pgtype.UUID
 	require.NoError(t, userUIID.Scan(userID))
@@ -168,7 +168,7 @@ func TestPgStorage_Store_Exact_Copy(t *testing.T) {
 	// (xmax-трюк в pg_storage.go), поэтому ожидаем
 	// ErrOriginalURLExists с _собственным_ токеном записи, а не ErrTokenTaken.
 	repo, mock := newMockPgStorage(t)
-	defer mock.Close(t.Context())
+	defer func() { _ = mock.Close(t.Context()) }()
 
 	var userUIID pgtype.UUID
 	require.NoError(t, userUIID.Scan(userID))
@@ -187,7 +187,7 @@ func TestPgStorage_Store_Exact_Copy(t *testing.T) {
 
 func TestPgStorage_Store_Violation_Of_Unexpected_Contraint(t *testing.T) {
 	repo, mock := newMockPgStorage(t)
-	defer mock.Close(t.Context())
+	defer func() { _ = mock.Close(t.Context()) }()
 
 	var userUIID pgtype.UUID
 	require.NoError(t, userUIID.Scan(userID))
@@ -213,7 +213,7 @@ func TestPgStorage_Store_Violation_Of_Unexpected_Contraint(t *testing.T) {
 
 func TestPgStorage_Unexpected_DB_Error(t *testing.T) {
 	repo, mock := newMockPgStorage(t)
-	defer mock.Close(t.Context())
+	defer func() { _ = mock.Close(t.Context()) }()
 
 	var userUIID pgtype.UUID
 	require.NoError(t, userUIID.Scan(userID))
@@ -256,7 +256,7 @@ func TestPgStorage_Unexpected_DB_Error(t *testing.T) {
 
 func TestBatchStore_Empty_Batch(t *testing.T) {
 	repo, mock := newMockPgStorage(t)
-	defer mock.Close(t.Context())
+	defer func() { _ = mock.Close(t.Context()) }()
 
 	// Никаких ожиданий не нужно
 
@@ -554,7 +554,7 @@ func TestBatchStore_TransactionError(t *testing.T) {
 
 func TestDeleteByTokens_One_Item_Success(t *testing.T) {
 	repo, mock := newMockPgStorage(t)
-	defer mock.Close(t.Context())
+	defer func() { _ = mock.Close(t.Context()) }()
 
 	mock.ExpectBegin()
 	const stmtName = "batch_delete"
@@ -572,7 +572,7 @@ func TestDeleteByTokens_One_Item_Success(t *testing.T) {
 
 func TestDeleteByTokens_Several_Items_Success(t *testing.T) {
 	repo, mock := newMockPgStorage(t)
-	defer mock.Close(t.Context())
+	defer func() { _ = mock.Close(t.Context()) }()
 
 	mock.ExpectBegin()
 
@@ -597,7 +597,7 @@ func TestDeleteByTokens_Several_Items_Success(t *testing.T) {
 
 func TestDeleteByTokens_Empty_Token_Set(t *testing.T) {
 	repo, mock := newMockPgStorage(t)
-	defer mock.Close(t.Context())
+	defer func() { _ = mock.Close(t.Context()) }()
 
 	// Никаких ожиданий не нужно: функция сразу вернёт nil
 	assert.NoError(t, repo.DeleteByTokens(t.Context(), []string{}))

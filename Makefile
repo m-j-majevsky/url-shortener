@@ -7,7 +7,7 @@
 # make test-pkg PKG=./internal/handler   # тесты одного пакета
 #
 # Использование (подробно):
-#   make build                           # собрать бинарник в ./bin/shortener
+#   make build                           # собрать бинарник в ./bin/shortener (с заливкой build-информации)
 #   make run                             # собрать и запустить (нужны env-переменные или флаги)
 #   make test                            # запустить все тесты (без интеграционных)
 #   make test-integration                # интеграционные тесты (нужен Docker с postgres:16-alpine)
@@ -16,6 +16,7 @@
 #   make cover                           # итоговый процент покрытия (без моков, cmd, migrations)
 #   make cover-html                      # HTML-отчёт покрытия (без моков, cmd, migrations)
 #   make mocks                           # сгенерировать моки через mockery
+#   make generate                        # сгенерировать Reset() по маркерам // generate:reset;
 #   make tidy                            # go mod tidy
 #   make fmt                             # gofmt -s -w по всем файлам проекта
 #   make fmt-imports                     # gofmt + goimports (автоустановка goimports)
@@ -26,6 +27,7 @@
 #   make all                             # lint + build + test
 #   make bench                           # прогнать бенчмарки (encoding, service, repository, handler)
 #   make loadgen                         # собрать генератор нагрузки в ./bin/loadgen
+#   make staticlint                      # собрать и прогнать статический анализатор
 #
 # Миграции не требуют отдельной цели: SQL-скрипты встроены в бинарник
 # (go:embed в migrations/migrate.go) и накатываются автоматически при старте
@@ -34,6 +36,18 @@
 
 BINARY   := bin/shortener
 MAIN_PKG := ./cmd/shortener
+
+# Статический анализатор: сам линтер не проверяет собственный main-пакет —
+# его граф зависимостей (x/tools, staticcheck) огромен и не является кодом проекта.
+# Список пакетов разбит на две группы: multichecker за один прогон грузит полный
+# граф зависимостей всех перечисленных пакетов (с типами и синтаксисом), и
+# объединённый список не помещается в память — процесс убивается OOM-killer'ом
+# (make печатает Killed). Группы подобраны так, чтобы каждый прогон умещался
+# по отдельности (проверено): основной граф проекта и граф cmd/reset,
+# тянущий golang.org/x/tools.
+STATICLINT        := bin/staticlint
+STATICLINT_PKGS   := ./cmd/shortener ./cmd/loadgen ./internal/... ./migrations ./pkg/...
+STATICLINT_PKGS_2 := ./cmd/reset
 
 # Инструменты форматирования
 GOFMT     := gofmt
@@ -44,11 +58,16 @@ COVER_F  := coverage_filtered.out
 # Пакеты, исключаемые из подсчёта покрытия
 COVER_EXCLUDE := -e '/mocks/' -e '/cmd/shortener/' -e '/migrations/'
 
-# Версия (из git или fallback)
-VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS  := -X main.version=$(VERSION)
+# Сборочная информация: версия (из git или fallback), дата сборки в UTC
+# (RFC 3339) и короткий хеш коммита. При отсутствии git-репозитория COMMIT
+# остаётся пустым — при выводе при старте пустые значения показываются как
+# "N/A" (см. buildInfo в cmd/shortener/main.go), сборка без заливки различима.
+VERSION    := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+BUILD_DATE := $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
+COMMIT     := $(shell git rev-parse --short HEAD 2>/dev/null)
+LDFLAGS    := -X main.buildVersion=$(VERSION) -X main.buildDate=$(BUILD_DATE) -X main.buildCommit=$(COMMIT)
 
-.PHONY: all build run test test-integration test-pkg test-v cover cover-html mocks tidy fmt fmt-imports fmt-check vet lint bench loadgen clean
+.PHONY: all build run test test-integration test-pkg test-v cover cover-html mocks generate tidy fmt fmt-imports fmt-check vet lint bench loadgen staticlint clean
 
 # ---- Комплексные цели ----
 
@@ -97,6 +116,16 @@ cover-html:
 mocks:
 	mockery
 
+# ---- Генератор Reset ----
+
+# Утилита cmd/reset обходит пакеты проекта и генерирует методы Reset()
+# для структур с маркером // generate:reset; (файлы reset.gen.go).
+# Запуск вручную после изменения помеченных структур — по аналогии с mocks:
+# сгенерированные файлы коммитятся, а не собираются на лету.
+# Короткий прогон — go run; go build не нужен, утилита одноразовая.
+generate:
+	go run ./cmd/reset .
+
 # ---- Модули ----
 
 tidy:
@@ -139,8 +168,14 @@ bench:
 loadgen:
 	go build -o bin/loadgen ./cmd/loadgen
 
+# Сборка и прогон собственного статического анализатора (см. cmd/staticlint).
+staticlint:
+	go build -o $(STATICLINT) ./cmd/staticlint
+	$(STATICLINT) $(STATICLINT_PKGS)
+	$(STATICLINT) $(STATICLINT_PKGS_2)
+
 # ---- Очистка ----
 
 
 clean:
-	rm -f $(BINARY) $(COVER) $(COVER_F)
+	rm -f $(BINARY) $(STATICLINT) $(COVER) $(COVER_F)
